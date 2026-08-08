@@ -1,150 +1,202 @@
-import { useEffect, useState, useCallback } from 'react'
-import {
-  format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths,
-  isSameMonth, isSameDay, parseISO,
-} from 'date-fns'
-import { sv } from 'date-fns/locale'
+import { useEffect, useState, useCallback, useMemo } from 'react'
+import { Calendar as BigCalendar, Views } from 'react-big-calendar'
+import type { View, SlotInfo, ToolbarProps } from 'react-big-calendar'
+import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
+import { format, parseISO, addHours, startOfWeek, endOfWeek, startOfMonth, endOfMonth, addDays } from 'date-fns'
+import 'react-big-calendar/lib/css/react-big-calendar.css'
+import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
+import '../styles/calendar.css'
 import { supabase } from '../lib/supabase'
 import { getUserId } from '../lib/data'
 import { useNewParam } from '../lib/useNewParam'
+import { localizer, messages, formats } from '../lib/calendarLocale'
 import type { HubEvent } from '../lib/types'
-import { Card, Button, Input, Label, Modal, EmptyState, Spinner, Textarea } from '../components/ui'
+import { Card, Button, Input, Label, Modal, Spinner, Textarea } from '../components/ui'
 
 const EVENT_COLORS = ['#38bdf8', '#6366f1', '#34d399', '#fbbf24', '#f87171', '#e879f9']
 
+interface CalEvent {
+  id: string
+  title: string
+  start: Date
+  end: Date
+  allDay: boolean
+  color: string
+  raw: HubEvent
+}
+
+const DnDCalendar = withDragAndDrop<CalEvent>(BigCalendar<CalEvent>)
+
 export default function Calendar() {
-  const [month, setMonth] = useState(startOfMonth(new Date()))
-  const [events, setEvents] = useState<HubEvent[]>([])
+  const [events, setEvents] = useState<CalEvent[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedDay, setSelectedDay] = useState<Date>(new Date())
+  const [view, setView] = useState<View>(Views.MONTH)
+  const [date, setDate] = useState(new Date())
   const [modal, setModal] = useState(false)
   const [editEvent, setEditEvent] = useState<HubEvent | null>(null)
+  const [slotStart, setSlotStart] = useState<Date | null>(null)
+  const [slotEnd, setSlotEnd] = useState<Date | null>(null)
 
-  const gridStart = startOfWeek(startOfMonth(month), { weekStartsOn: 1 })
-  const gridEnd = endOfWeek(endOfMonth(month), { weekStartsOn: 1 })
+  // Hämta ett generöst fönster runt aktuellt datum så navigering känns direkt
+  const [from, to] = useMemo(() => {
+    if (view === Views.DAY) return [addDays(date, -2), addDays(date, 2)]
+    if (view === Views.WEEK) return [addDays(startOfWeek(date, { weekStartsOn: 1 }), -7), addDays(endOfWeek(date, { weekStartsOn: 1 }), 7)]
+    if (view === Views.AGENDA) return [addDays(date, -1), addDays(date, 40)]
+    return [addDays(startOfMonth(date), -10), addDays(endOfMonth(date), 10)]
+  }, [view, date])
 
   const load = useCallback(async () => {
     const { data } = await supabase
       .from('hub_events')
       .select('*')
-      .gte('starts_at', gridStart.toISOString())
-      .lte('starts_at', addDays(gridEnd, 1).toISOString())
+      .gte('starts_at', from.toISOString())
+      .lte('starts_at', to.toISOString())
       .order('starts_at')
-    setEvents(data ?? [])
+    setEvents(
+      (data ?? []).map((e: HubEvent) => {
+        const start = parseISO(e.starts_at)
+        return {
+          id: e.id,
+          title: e.title,
+          start,
+          end: e.ends_at ? parseISO(e.ends_at) : (e.all_day ? start : addHours(start, 1)),
+          allDay: e.all_day,
+          color: e.color,
+          raw: e,
+        }
+      }),
+    )
     setLoading(false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month])
+  }, [from, to])
 
   useEffect(() => { load() }, [load])
-  useNewParam(() => { setEditEvent(null); setModal(true) })
+  useNewParam(() => { setEditEvent(null); setSlotStart(null); setSlotEnd(null); setModal(true) })
 
-  async function remove(id: string) {
-    await supabase.from('hub_events').delete().eq('id', id)
+  async function persistTimes(ev: CalEvent, start: Date, end: Date, allDay: boolean) {
+    setEvents((prev) => prev.map((x) => (x.id === ev.id ? { ...x, start, end, allDay } : x)))
+    await supabase
+      .from('hub_events')
+      .update({ starts_at: start.toISOString(), ends_at: allDay ? null : end.toISOString(), all_day: allDay })
+      .eq('id', ev.id)
     load()
   }
 
-  const days: Date[] = []
-  for (let d = gridStart; d <= gridEnd; d = addDays(d, 1)) days.push(d)
-  const dayEvents = (day: Date) => events.filter((e) => isSameDay(parseISO(e.starts_at), day))
-  const selectedEvents = dayEvents(selectedDay)
+  async function remove(id: string) {
+    await supabase.from('hub_events').delete().eq('id', id)
+    setModal(false)
+    load()
+  }
+
+  function onSelectSlot(slot: SlotInfo) {
+    setEditEvent(null)
+    setSlotStart(slot.start as Date)
+    setSlotEnd(slot.end as Date)
+    setModal(true)
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">Kalender</h1>
-        <Button onClick={() => { setEditEvent(null); setModal(true) }}>+ Ny händelse</Button>
+        <Button onClick={() => { setEditEvent(null); setSlotStart(null); setSlotEnd(null); setModal(true) }}>
+          + Ny händelse
+        </Button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <div className="mb-4 flex items-center justify-between">
-            <button onClick={() => setMonth(addMonths(month, -1))} className="rounded-lg px-3 py-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Föregående månad">←</button>
-            <h2 className="text-lg font-semibold capitalize">{format(month, 'MMMM yyyy', { locale: sv })}</h2>
-            <button onClick={() => setMonth(addMonths(month, 1))} className="rounded-lg px-3 py-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Nästa månad">→</button>
+      <Card className="!p-4">
+        {loading ? <Spinner /> : (
+          <div style={{ height: '72vh', minHeight: 520 }}>
+            <DnDCalendar
+              localizer={localizer}
+              culture="sv"
+              messages={messages}
+              formats={formats}
+              events={events}
+              view={view}
+              onView={setView}
+              date={date}
+              onNavigate={setDate}
+              views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
+              step={30}
+              timeslots={2}
+              scrollToTime={new Date(1970, 0, 1, 7, 0)}
+              popup
+              selectable
+              onSelectSlot={onSelectSlot}
+              onSelectEvent={(ev) => { setEditEvent(ev.raw); setModal(true) }}
+              onEventDrop={({ event, start, end, isAllDay }) =>
+                persistTimes(event, start as Date, end as Date, Boolean(isAllDay))
+              }
+              onEventResize={({ event, start, end }) =>
+                persistTimes(event, start as Date, end as Date, event.allDay)
+              }
+              resizable
+              components={{ toolbar: SwedishToolbar }}
+              eventPropGetter={(ev) => ({ style: { backgroundColor: ev.color } })}
+              dayLayoutAlgorithm="no-overlap"
+              style={{ height: '100%' }}
+            />
           </div>
+        )}
+      </Card>
 
-          {loading ? <Spinner /> : (
-            <>
-              <div className="mb-1 grid grid-cols-7 text-center text-xs font-medium uppercase text-muted">
-                {['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'].map((d) => <div key={d} className="py-1">{d}</div>)}
-              </div>
-              <div className="grid grid-cols-7 gap-1">
-                {days.map((day) => {
-                  const evs = dayEvents(day)
-                  const isSelected = isSameDay(day, selectedDay)
-                  const isToday = isSameDay(day, new Date())
-                  return (
-                    <button
-                      key={day.toISOString()}
-                      onClick={() => setSelectedDay(day)}
-                      className={`flex aspect-square flex-col items-center justify-start rounded-xl border p-1 transition-colors sm:aspect-4/3 ${
-                        isSelected ? 'border-accent bg-accent/15' : 'border-transparent hover:bg-card-hover'
-                      } ${!isSameMonth(day, month) ? 'opacity-35' : ''}`}
-                    >
-                      <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${isToday ? 'bg-accent font-bold text-white' : ''}`}>
-                        {format(day, 'd')}
-                      </span>
-                      <div className="mt-0.5 flex flex-wrap justify-center gap-0.5">
-                        {evs.slice(0, 3).map((e) => (
-                          <span key={e.id} className="h-1.5 w-1.5 rounded-full" style={{ background: e.color }} />
-                        ))}
-                        {evs.length > 3 && <span className="text-[9px] text-muted">+{evs.length - 3}</span>}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </>
-          )}
-        </Card>
-
-        <Card>
-          <h2 className="mb-3 text-sm font-semibold capitalize">{format(selectedDay, 'EEEE d MMMM', { locale: sv })}</h2>
-          {selectedEvents.length === 0 ? (
-            <EmptyState emoji="🌙" text="Inget inbokat den här dagen." />
-          ) : (
-            <ul className="space-y-2">
-              {selectedEvents.map((ev) => (
-                <li key={ev.id} className="group rounded-xl border border-border bg-surface p-3">
-                  <div className="flex items-start gap-2">
-                    <span className="mt-1 h-3 w-3 shrink-0 rounded-full" style={{ background: ev.color }} />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">{ev.title}</p>
-                      <p className="text-xs text-muted">
-                        {ev.all_day ? 'Heldag' : format(parseISO(ev.starts_at), 'HH:mm')}
-                        {!ev.all_day && ev.ends_at ? `–${format(parseISO(ev.ends_at), 'HH:mm')}` : ''}
-                        {ev.location ? ` · ${ev.location}` : ''}
-                      </p>
-                      {ev.description && <p className="mt-1 text-xs text-muted">{ev.description}</p>}
-                    </div>
-                    <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                      <button onClick={() => { setEditEvent(ev); setModal(true) }} className="p-0.5 text-xs" aria-label="Redigera">✏️</button>
-                      <button onClick={() => remove(ev.id)} className="p-0.5 text-xs" aria-label="Ta bort">🗑️</button>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-          <Button variant="ghost" className="mt-4 w-full" onClick={() => { setEditEvent(null); setModal(true) }}>
-            + Lägg till denna dag
-          </Button>
-        </Card>
-      </div>
+      <p className="text-xs text-muted">
+        Tips: dra i en händelse för att flytta den, dra i kanten för att ändra längd, eller markera ett tidsspann för att skapa en ny.
+      </p>
 
       <EventModal
         open={modal}
         onClose={() => setModal(false)}
         event={editEvent}
-        defaultDay={selectedDay}
+        initialStart={slotStart}
+        initialEnd={slotEnd}
         onSaved={load}
+        onDelete={remove}
       />
     </div>
   )
 }
 
-function EventModal({ open, onClose, event, defaultDay, onSaved }: {
-  open: boolean; onClose: () => void; event: HubEvent | null; defaultDay: Date; onSaved: () => void
+function SwedishToolbar({ label, onNavigate, onView, view }: ToolbarProps<CalEvent>) {
+  const views: { key: View; label: string }[] = [
+    { key: Views.MONTH, label: 'Månad' },
+    { key: Views.WEEK, label: 'Vecka' },
+    { key: Views.DAY, label: 'Dag' },
+    { key: Views.AGENDA, label: 'Agenda' },
+  ]
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-1">
+        <button onClick={() => onNavigate('PREV')} className="rounded-lg px-2.5 py-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Föregående">←</button>
+        <button onClick={() => onNavigate('TODAY')} className="rounded-lg border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink">Idag</button>
+        <button onClick={() => onNavigate('NEXT')} className="rounded-lg px-2.5 py-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Nästa">→</button>
+      </div>
+      <h2 className="text-base font-semibold capitalize">{label}</h2>
+      <div className="flex gap-1">
+        {views.map((v) => (
+          <button
+            key={v.key}
+            onClick={() => onView(v.key)}
+            className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
+              view === v.key ? 'bg-accent/20 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+            }`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, onDelete }: {
+  open: boolean
+  onClose: () => void
+  event: HubEvent | null
+  initialStart: Date | null
+  initialEnd: Date | null
+  onSaved: () => void
+  onDelete: (id: string) => void
 }) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -156,6 +208,7 @@ function EventModal({ open, onClose, event, defaultDay, onSaved }: {
   const [color, setColor] = useState(EVENT_COLORS[0])
 
   useEffect(() => {
+    if (!open) return
     if (event) {
       const start = parseISO(event.starts_at)
       setTitle(event.title)
@@ -167,16 +220,18 @@ function EventModal({ open, onClose, event, defaultDay, onSaved }: {
       setAllDay(event.all_day)
       setColor(event.color)
     } else {
+      const start = initialStart ?? new Date()
+      const isWholeDay = Boolean(initialStart && initialEnd && (initialEnd.getTime() - initialStart.getTime()) >= 86_400_000)
       setTitle('')
       setDescription('')
       setLocation('')
-      setDate(format(defaultDay, 'yyyy-MM-dd'))
-      setTime('12:00')
-      setEndTime('')
-      setAllDay(false)
+      setDate(format(start, 'yyyy-MM-dd'))
+      setTime(format(initialStart ?? new Date(), 'HH:mm'))
+      setEndTime(initialEnd && !isWholeDay ? format(initialEnd, 'HH:mm') : '')
+      setAllDay(isWholeDay)
       setColor(EVENT_COLORS[0])
     }
-  }, [event, open, defaultDay])
+  }, [event, open, initialStart, initialEnd])
 
   async function save() {
     if (!title.trim() || !date) return
@@ -238,7 +293,7 @@ function EventModal({ open, onClose, event, defaultDay, onSaved }: {
         </div>
         <div>
           <Label>Beskrivning</Label>
-          <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detaljer (valfritt)" />
+          <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detaljer (valfritt)" className="min-h-16" />
         </div>
         <div>
           <Label>Färg</Label>
@@ -254,9 +309,14 @@ function EventModal({ open, onClose, event, defaultDay, onSaved }: {
             ))}
           </div>
         </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={onClose}>Avbryt</Button>
-          <Button onClick={save}>Spara</Button>
+        <div className="flex justify-between gap-2 pt-2">
+          {event ? (
+            <Button variant="danger" onClick={() => onDelete(event.id)}>Ta bort</Button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose}>Avbryt</Button>
+            <Button onClick={save}>Spara</Button>
+          </div>
         </div>
       </div>
     </Modal>

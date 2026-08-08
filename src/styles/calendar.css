@@ -1,0 +1,207 @@
+/* Mörkt tema för react-big-calendar — bibliotekets egen CSS är ljus. */
+
+.rbc-calendar {
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* --- Rutnät och ramar --- */
+.rbc-month-view,
+.rbc-time-view,
+.rbc-agenda-view table.rbc-agenda-table {
+  border-color: var(--color-border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.rbc-month-row + .rbc-month-row,
+.rbc-day-bg + .rbc-day-bg,
+.rbc-header + .rbc-header,
+.rbc-time-header-content,
+.rbc-time-content,
+.rbc-time-content > * + * > *,
+.rbc-timeslot-group,
+.rbc-time-header.rbc-overflowing,
+.rbc-time-view .rbc-row,
+.rbc-agenda-view table.rbc-agenda-table tbody > tr > td,
+.rbc-agenda-view table.rbc-agenda-table thead > tr > th {
+  border-color: var(--color-border);
+}
+
+.rbc-time-content > .rbc-time-gutter,
+.rbc-time-gutter .rbc-timeslot-group {
+  border-color: var(--color-border);
+}
+
+/* Svagare linje mellan halvtimmar */
+.rbc-time-slot + .rbc-time-slot {
+  border-top: 1px solid transparent;
+}
+
+/* --- Dagrubriker --- */
+.rbc-header {
+  padding: 0.6rem 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  border-bottom-color: var(--color-border);
+}
+
+.rbc-header a,
+.rbc-button-link {
+  color: inherit;
+}
+
+/* --- Dagbakgrunder --- */
+.rbc-day-bg {
+  background: transparent;
+}
+
+.rbc-off-range-bg {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.rbc-off-range .rbc-button-link {
+  color: color-mix(in srgb, var(--color-muted) 45%, transparent);
+}
+
+.rbc-today {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.rbc-date-cell {
+  padding: 0.35rem 0.5rem 0;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
+.rbc-date-cell.rbc-now .rbc-button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* --- Händelser --- */
+.rbc-event {
+  background: var(--color-accent);
+  border: none;
+  border-radius: 0.4rem;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.rbc-event:focus {
+  outline: 2px solid var(--color-accent-soft);
+  outline-offset: 1px;
+}
+
+.rbc-event.rbc-selected {
+  filter: brightness(1.15);
+}
+
+.rbc-event-label {
+  font-size: 0.65rem;
+  opacity: 0.85;
+}
+
+.rbc-show-more {
+  background: transparent;
+  color: var(--color-accent-soft);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.rbc-show-more:hover {
+  color: var(--color-ink);
+}
+
+/* --- Tidsvy --- */
+.rbc-time-gutter .rbc-timeslot-group {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+}
+
+.rbc-time-header-gutter,
+.rbc-time-gutter {
+  background: transparent;
+}
+
+.rbc-current-time-indicator {
+  background: var(--color-bad);
+  height: 2px;
+}
+
+.rbc-day-slot .rbc-time-slot {
+  border-top-color: transparent;
+}
+
+.rbc-allday-cell {
+  max-height: 4rem;
+}
+
+.rbc-time-view .rbc-allday-cell + .rbc-allday-cell {
+  border-left-color: var(--color-border);
+}
+
+/* --- Agenda --- */
+.rbc-agenda-view table.rbc-agenda-table thead > tr > th {
+  color: var(--color-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  padding: 0.5rem;
+}
+
+.rbc-agenda-view table.rbc-agenda-table tbody > tr > td {
+  padding: 0.6rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.rbc-agenda-view table.rbc-agenda-table tbody > tr:hover {
+  background: var(--color-card-hover);
+}
+
+.rbc-agenda-date-cell,
+.rbc-agenda-time-cell {
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.rbc-agenda-event-cell {
+  color: var(--color-ink);
+}
+
+/* --- Markering av nytt tidsspann --- */
+.rbc-slot-selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  border-radius: 0.3rem;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.3rem;
+}
+
+.rbc-day-slot .rbc-selected-cell {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+}
+
+/* --- Drag-and-drop --- */
+.rbc-addons-dnd .rbc-addons-dnd-resize-ns-icon,
+.rbc-addons-dnd .rbc-addons-dnd-resize-ew-icon {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.rbc-addons-dnd.rbc-addons-dnd-is-dragging .rbc-event:not(.rbc-addons-dnd-dragged-event) {
+  opacity: 0.45;
+}
+
+.rbc-addons-dnd .rbc-addons-dnd-drag-preview {
+  opacity: 0.8;
+}
