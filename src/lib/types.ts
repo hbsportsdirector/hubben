@@ -99,6 +99,29 @@ export interface HubBudget {
   monthly_limit: number
 }
 
+export interface HubWorkout {
+  id: string
+  user_id: string
+  workout_date: string
+  kind: string
+  duration_min: number
+  intensity: 1 | 2 | 3 | 4 | 5
+  notes: string | null
+  created_at: string
+}
+
+export interface HubWeeklyReview {
+  id: string
+  user_id: string
+  week_start: string
+  focus: string
+  priorities: string[]
+  wins: string
+  carried_over: string
+  completed_at: string | null
+  created_at: string
+}
+
 export interface HubSavingsGoal {
   id: string
   user_id: string

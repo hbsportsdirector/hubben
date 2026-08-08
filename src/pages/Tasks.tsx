@@ -3,6 +3,7 @@ import { format, isToday, isPast, parseISO } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase } from '../lib/supabase'
 import { getUserId, priorityMeta } from '../lib/data'
+import { useNewParam } from '../lib/useNewParam'
 import type { HubTask, HubProject, HubGoal } from '../lib/types'
 import { Card, SectionTitle, Button, Input, Select, Label, Modal, ProgressBar, EmptyState, Spinner, Textarea } from '../components/ui'
 
@@ -33,6 +34,7 @@ export default function Tasks() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useNewParam(() => { setEditTask(null); setTaskModal(true) })
 
   async function toggleDone(task: HubTask) {
     await supabase.from('hub_tasks').update({

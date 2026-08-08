@@ -3,6 +3,7 @@ import { format, parseISO } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase } from '../lib/supabase'
 import { getUserId } from '../lib/data'
+import { useNewParam } from '../lib/useNewParam'
 import type { HubNote } from '../lib/types'
 import { Card, Button, Input, Label, Modal, EmptyState, Spinner, Textarea } from '../components/ui'
 
@@ -20,6 +21,7 @@ export default function Notes() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useNewParam(() => { setEditNote(null); setModal(true) })
 
   async function togglePin(note: HubNote) {
     await supabase.from('hub_notes').update({ pinned: !note.pinned }).eq('id', note.id)

@@ -4,7 +4,8 @@ import { sv } from 'date-fns/locale'
 import { supabase } from '../lib/supabase'
 import { getUserId } from '../lib/data'
 import type { HubHabit, HubHabitLog } from '../lib/types'
-import { Card, Button, Input, Select, Label, Modal, EmptyState, Spinner } from '../components/ui'
+import { Card, Button, Input, Label, Modal, EmptyState, Spinner, SectionTitle } from '../components/ui'
+import Heatmap from '../components/Heatmap'
 
 const EMOJIS = ['💪', '🏃', '📖', '🧘', '💧', '🥗', '😴', '🎸', '🧹', '💊', '🚭', '✍️']
 const COLORS = ['#22c55e', '#38bdf8', '#6366f1', '#fbbf24', '#f87171', '#e879f9']
@@ -15,6 +16,7 @@ export default function Habits() {
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(false)
   const [editHabit, setEditHabit] = useState<HubHabit | null>(null)
+  const [heatmapHabit, setHeatmapHabit] = useState<string | null>(null)
 
   const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
@@ -23,7 +25,7 @@ export default function Habits() {
   const load = useCallback(async () => {
     const [h, l] = await Promise.all([
       supabase.from('hub_habits').select('*').eq('archived', false).order('created_at'),
-      supabase.from('hub_habit_logs').select('*').gte('log_date', format(subDays(weekStart, 60), 'yyyy-MM-dd')),
+      supabase.from('hub_habit_logs').select('*').gte('log_date', format(subDays(weekStart, 370), 'yyyy-MM-dd')),
     ])
     setHabits(h.data ?? [])
     setLogs(l.data ?? [])
@@ -145,6 +147,43 @@ export default function Habits() {
               })}
             </tbody>
           </table>
+        </Card>
+      )}
+
+      {habits.length > 0 && (
+        <Card>
+          <SectionTitle>Årsöversikt</SectionTitle>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {habits.map((h) => {
+              const active = (heatmapHabit ?? habits[0].id) === h.id
+              return (
+                <button
+                  key={h.id}
+                  onClick={() => setHeatmapHabit(h.id)}
+                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    active ? 'border-transparent text-white' : 'border-border text-muted hover:text-ink'
+                  }`}
+                  style={active ? { background: h.color } : undefined}
+                >
+                  <span aria-hidden>{h.emoji}</span>
+                  {h.name}
+                </button>
+              )
+            })}
+          </div>
+          {(() => {
+            const habit = habits.find((h) => h.id === (heatmapHabit ?? habits[0].id)) ?? habits[0]
+            const habitLogs = logs.filter((l) => l.habit_id === habit.id)
+            const values = new Map(habitLogs.map((l) => [l.log_date, 1]))
+            return (
+              <>
+                <Heatmap values={values} color={habit.color} />
+                <p className="mt-2 text-xs text-muted">
+                  {habitLogs.length} dagar senaste året · nuvarande svit {streak(habit)} {streak(habit) === 1 ? 'dag' : 'dagar'}
+                </p>
+              </>
+            )
+          })()}
         </Card>
       )}
 

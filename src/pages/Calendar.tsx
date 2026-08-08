@@ -6,6 +6,7 @@ import {
 import { sv } from 'date-fns/locale'
 import { supabase } from '../lib/supabase'
 import { getUserId } from '../lib/data'
+import { useNewParam } from '../lib/useNewParam'
 import type { HubEvent } from '../lib/types'
 import { Card, Button, Input, Label, Modal, EmptyState, Spinner, Textarea } from '../components/ui'
 
@@ -35,6 +36,7 @@ export default function Calendar() {
   }, [month])
 
   useEffect(() => { load() }, [load])
+  useNewParam(() => { setEditEvent(null); setModal(true) })
 
   async function remove(id: string) {
     await supabase.from('hub_events').delete().eq('id', id)

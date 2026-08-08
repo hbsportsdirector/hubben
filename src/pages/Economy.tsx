@@ -3,6 +3,7 @@ import { format, startOfMonth, endOfMonth, addMonths, subMonths, parseISO } from
 import { sv } from 'date-fns/locale'
 import { supabase } from '../lib/supabase'
 import { getUserId, formatSEK } from '../lib/data'
+import { useNewParam } from '../lib/useNewParam'
 import type { HubTransaction, HubBudget, HubSavingsGoal } from '../lib/types'
 import { Card, SectionTitle, Button, Input, Select, Label, Modal, ProgressBar, EmptyState, Spinner, StatTile } from '../components/ui'
 
@@ -42,6 +43,7 @@ export default function Economy() {
   }, [month])
 
   useEffect(() => { load() }, [load])
+  useNewParam(() => setTxModal(true))
 
   async function removeTx(id: string) {
     await supabase.from('hub_transactions').delete().eq('id', id)

@@ -1,15 +1,18 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import CommandPalette from './CommandPalette'
 
 const navItems = [
   { to: '/', label: 'Översikt', emoji: '🪐' },
   { to: '/uppgifter', label: 'Uppgifter & Mål', emoji: '✅' },
   { to: '/vanor', label: 'Vanor', emoji: '🔁' },
+  { to: '/traning', label: 'Träning', emoji: '💪' },
   { to: '/kalender', label: 'Kalender', emoji: '📅' },
   { to: '/anteckningar', label: 'Anteckningar', emoji: '📝' },
   { to: '/lankar', label: 'Länkar', emoji: '🔗' },
   { to: '/ekonomi', label: 'Ekonomi', emoji: '💰' },
+  { to: '/vecka', label: 'Veckogranskning', emoji: '🧭' },
 ]
 
 export default function Layout({ userEmail, children }: { userEmail: string; children: ReactNode }) {
@@ -39,6 +42,7 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
           ))}
         </nav>
         <div className="border-t border-border px-4 py-4">
+          <p className="mb-2 text-[10px] text-muted/70">Tips: <kbd className="rounded border border-border bg-surface px-1">Ctrl</kbd>+<kbd className="rounded border border-border bg-surface px-1">K</kbd> öppnar kommandopaletten</p>
           <p className="mb-2 truncate text-xs text-muted" title={userEmail}>{userEmail}</p>
           <button
             onClick={() => supabase.auth.signOut()}
@@ -64,19 +68,21 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
       </main>
 
       {/* Bottennav (mobil) */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex justify-around border-t border-border bg-surface/90 py-2 backdrop-blur-xl md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex gap-1 overflow-x-auto border-t border-border bg-surface/90 px-2 py-2 backdrop-blur-xl md:hidden">
         {navItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === '/'}
-            className={({ isActive }) => `flex flex-col items-center gap-0.5 rounded-lg px-2 py-1 text-[10px] ${isActive ? 'text-accent-soft' : 'text-muted'}`}
+            className={({ isActive }) => `flex shrink-0 flex-col items-center gap-0.5 rounded-lg px-2.5 py-1 text-[10px] ${isActive ? 'text-accent-soft' : 'text-muted'}`}
           >
             <span className="text-base" aria-hidden>{item.emoji}</span>
             {item.label.split(' ')[0]}
           </NavLink>
         ))}
       </nav>
+
+      <CommandPalette />
     </div>
   )
 }

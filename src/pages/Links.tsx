@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { getUserId } from '../lib/data'
+import { useNewParam } from '../lib/useNewParam'
 import type { HubLink } from '../lib/types'
 import { Card, Button, Input, Label, Modal, EmptyState, Spinner, SectionTitle } from '../components/ui'
 
@@ -17,6 +18,7 @@ export default function Links() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useNewParam(() => { setEditLink(null); setModal(true) })
 
   async function remove(id: string) {
     await supabase.from('hub_links').delete().eq('id', id)

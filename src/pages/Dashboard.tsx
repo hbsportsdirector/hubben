@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { format, isToday, isPast, parseISO, startOfMonth, endOfMonth, addDays } from 'date-fns'
+import { format, isToday, isPast, parseISO, startOfMonth, endOfMonth, addDays, startOfWeek, endOfWeek } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase } from '../lib/supabase'
 import { getUserId, formatSEK } from '../lib/data'
-import type { HubTask, HubEvent, HubHabit, HubHabitLog, HubTransaction } from '../lib/types'
+import type { HubTask, HubEvent, HubHabit, HubHabitLog, HubTransaction, HubWeeklyReview, HubWorkout } from '../lib/types'
 import { Card, SectionTitle, StatTile, EmptyState, Spinner, Input, Button } from '../components/ui'
 
 export default function Dashboard() {
@@ -13,6 +13,8 @@ export default function Dashboard() {
   const [habits, setHabits] = useState<HubHabit[]>([])
   const [logs, setLogs] = useState<HubHabitLog[]>([])
   const [txs, setTxs] = useState<HubTransaction[]>([])
+  const [review, setReview] = useState<HubWeeklyReview | null>(null)
+  const [weekWorkouts, setWeekWorkouts] = useState<HubWorkout[]>([])
   const [loading, setLoading] = useState(true)
   const [quickTitle, setQuickTitle] = useState('')
 
@@ -20,18 +22,25 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     const now = new Date()
-    const [t, e, h, l, tx] = await Promise.all([
+    const weekStart = startOfWeek(now, { weekStartsOn: 1 })
+    const [t, e, h, l, tx, r, w] = await Promise.all([
       supabase.from('hub_tasks').select('*').eq('done', false).order('due_date', { ascending: true, nullsFirst: false }),
       supabase.from('hub_events').select('*').gte('starts_at', now.toISOString()).lte('starts_at', addDays(now, 7).toISOString()).order('starts_at'),
       supabase.from('hub_habits').select('*').eq('archived', false).order('created_at'),
       supabase.from('hub_habit_logs').select('*').eq('log_date', format(now, 'yyyy-MM-dd')),
       supabase.from('hub_transactions').select('*').gte('tx_date', format(startOfMonth(now), 'yyyy-MM-dd')).lte('tx_date', format(endOfMonth(now), 'yyyy-MM-dd')),
+      supabase.from('hub_weekly_reviews').select('*').eq('week_start', format(weekStart, 'yyyy-MM-dd')).maybeSingle(),
+      supabase.from('hub_workouts').select('*')
+        .gte('workout_date', format(weekStart, 'yyyy-MM-dd'))
+        .lte('workout_date', format(endOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd')),
     ])
     setTasks(t.data ?? [])
     setEvents(e.data ?? [])
     setHabits(h.data ?? [])
     setLogs(l.data ?? [])
     setTxs(tx.data ?? [])
+    setReview((r.data as HubWeeklyReview | null) ?? null)
+    setWeekWorkouts(w.data ?? [])
     setLoading(false)
   }, [])
 
@@ -79,10 +88,34 @@ export default function Dashboard() {
         <p className="mt-1 text-sm capitalize text-muted">{format(new Date(), 'EEEE d MMMM yyyy', { locale: sv })}</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {review && (review.focus || review.priorities.length > 0) ? (
+        <Card className="border-accent/40 bg-accent/5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider text-accent-soft">Veckans fokus</p>
+              {review.focus && <p className="mt-1 text-lg font-semibold">{review.focus}</p>}
+              {review.priorities.length > 0 && (
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {review.priorities.map((p, i) => (
+                    <li key={i} className="rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted">{p}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <Link to="/vecka" className="shrink-0 text-xs text-accent-soft hover:underline">Granska →</Link>
+          </div>
+        </Card>
+      ) : (
+        <Link to="/vecka" className="block rounded-2xl border border-dashed border-border px-4 py-3 text-sm text-muted transition-colors hover:border-accent hover:text-ink">
+          🧭 Inget veckofokus satt — gör veckogranskningen och sätt riktningen för veckan →
+        </Link>
+      )}
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatTile label="Uppgifter idag" value={dueTodayOrLate.length} sub={`${tasks.length} öppna totalt`} />
         <StatTile label="Händelser idag" value={eventsToday.length} sub="närmaste 7 dagarna nedan" />
         <StatTile label="Vanor idag" value={`${habitsDone}/${habits.length}`} sub={habits.length > 0 && habitsDone === habits.length ? 'Alla klara! 🎉' : 'avklarade'} />
+        <StatTile label="Träning v." value={weekWorkouts.length} sub={`${weekWorkouts.reduce((s, w) => s + w.duration_min, 0)} min denna vecka`} />
         <StatTile label="Månadens netto" value={formatSEK(net)} accent={net >= 0 ? 'var(--color-good)' : 'var(--color-bad)'} sub={`${formatSEK(income)} in · ${formatSEK(expenses)} ut`} />
       </div>
 
