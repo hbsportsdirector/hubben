@@ -42,6 +42,17 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
           ))}
         </nav>
         <div className="border-t border-border px-4 py-4">
+          <NavLink
+            to="/installningar"
+            className={({ isActive }) =>
+              `mb-3 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
+                isActive ? 'bg-accent/15 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+              }`
+            }
+          >
+            <span aria-hidden>⚙️</span>
+            Inställningar
+          </NavLink>
           <p className="mb-2 text-[10px] text-muted/70">Tips: <kbd className="rounded border border-border bg-surface px-1">Ctrl</kbd>+<kbd className="rounded border border-border bg-surface px-1">K</kbd> öppnar kommandopaletten</p>
           <p className="mb-2 truncate text-xs text-muted" title={userEmail}>{userEmail}</p>
           <button

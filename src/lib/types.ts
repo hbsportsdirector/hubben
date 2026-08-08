@@ -122,6 +122,25 @@ export interface HubWeeklyReview {
   created_at: string
 }
 
+export interface HubMailAccount {
+  id: string
+  user_id: string
+  email: string
+  label: string
+  provider: 'imap' | 'gmail' | 'outlook'
+  imap_host: string | null
+  imap_port: number
+  smtp_host: string | null
+  smtp_port: number
+  color: string
+  active: boolean
+  secret_id: string | null
+  last_checked_at: string | null
+  last_error: string | null
+  sort_order: number
+  created_at: string
+}
+
 export interface HubStock {
   id: string
   user_id: string

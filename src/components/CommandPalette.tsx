@@ -25,6 +25,7 @@ const COMMANDS: Command[] = [
   { label: 'Anteckningar', emoji: '📝', keywords: 'notes idéer', hint: 'gå till', action: (n) => n('/anteckningar') },
   { label: 'Länkar', emoji: '🔗', keywords: 'bokmärken', hint: 'gå till', action: (n) => n('/lankar') },
   { label: 'Ekonomi', emoji: '💰', keywords: 'budget pengar transaktioner sparmål', hint: 'gå till', action: (n) => n('/ekonomi') },
+  { label: 'Inställningar', emoji: '⚙️', keywords: 'mejl konton lösenord imap konfiguration', hint: 'gå till', action: (n) => n('/installningar') },
 ]
 
 export default function CommandPalette() {
