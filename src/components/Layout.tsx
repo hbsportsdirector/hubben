@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import CommandPalette from './CommandPalette'
 
 const navItems = [
   { to: '/', label: 'Översikt', emoji: '🪐' },
+  { to: '/mejl', label: 'Mejl', emoji: '✉️' },
   { to: '/uppgifter', label: 'Uppgifter & Mål', emoji: '✅' },
   { to: '/vanor', label: 'Vanor', emoji: '🔁' },
   { to: '/traning', label: 'Träning', emoji: '💪' },
@@ -16,6 +17,8 @@ const navItems = [
 ]
 
 export default function Layout({ userEmail, children }: { userEmail: string; children: ReactNode }) {
+  // Mejlvyn behöver hela bredden för lista + läsruta
+  const bred = useLocation().pathname.startsWith('/mejl')
   return (
     <div className="flex min-h-screen">
       {/* Sidomeny (desktop) */}
@@ -75,7 +78,7 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
 
       {/* Innehåll */}
       <main className="min-w-0 flex-1 px-4 pb-24 pt-16 md:ml-60 md:px-8 md:pb-10 md:pt-8">
-        <div className="mx-auto max-w-6xl">{children}</div>
+        <div className={`mx-auto ${bred ? 'max-w-none' : 'max-w-6xl'}`}>{children}</div>
       </main>
 
       {/* Bottennav (mobil) */}
