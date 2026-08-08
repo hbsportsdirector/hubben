@@ -6,6 +6,7 @@ import { getUserId, formatSEK } from '../lib/data'
 import { useNewParam } from '../lib/useNewParam'
 import type { HubTransaction, HubBudget, HubSavingsGoal } from '../lib/types'
 import { Card, SectionTitle, Button, Input, Select, Label, Modal, ProgressBar, EmptyState, Spinner, StatTile } from '../components/ui'
+import MarketWidgets from '../components/MarketWidgets'
 
 const EXPENSE_CATEGORIES = ['Boende', 'Mat', 'Transport', 'Nöje', 'Hälsa', 'Kläder', 'Sparande', 'Övrigt']
 const INCOME_CATEGORIES = ['Lön', 'Bidrag', 'Försäljning', 'Övrigt']
@@ -90,6 +91,8 @@ export default function Economy() {
         <StatTile label="Utgifter" value={formatSEK(expenses)} accent={EXPENSE_COLOR} />
         <StatTile label="Netto" value={formatSEK(income - expenses)} accent={income - expenses >= 0 ? 'var(--color-good)' : 'var(--color-bad)'} />
       </div>
+
+      <MarketWidgets />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

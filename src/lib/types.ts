@@ -122,6 +122,25 @@ export interface HubWeeklyReview {
   created_at: string
 }
 
+export interface HubStock {
+  id: string
+  user_id: string
+  symbol: string
+  label: string | null
+  sort_order: number
+  created_at: string
+}
+
+export interface MarketQuote {
+  symbol: string
+  name?: string
+  currency?: string
+  price?: number
+  prevClose?: number
+  spark?: number[]
+  error?: boolean
+}
+
 export interface HubSavingsGoal {
   id: string
   user_id: string
