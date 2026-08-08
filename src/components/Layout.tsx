@@ -1,0 +1,82 @@
+import type { ReactNode } from 'react'
+import { NavLink } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+
+const navItems = [
+  { to: '/', label: 'Översikt', emoji: '🪐' },
+  { to: '/uppgifter', label: 'Uppgifter & Mål', emoji: '✅' },
+  { to: '/vanor', label: 'Vanor', emoji: '🔁' },
+  { to: '/kalender', label: 'Kalender', emoji: '📅' },
+  { to: '/anteckningar', label: 'Anteckningar', emoji: '📝' },
+  { to: '/lankar', label: 'Länkar', emoji: '🔗' },
+  { to: '/ekonomi', label: 'Ekonomi', emoji: '💰' },
+]
+
+export default function Layout({ userEmail, children }: { userEmail: string; children: ReactNode }) {
+  return (
+    <div className="flex min-h-screen">
+      {/* Sidomeny (desktop) */}
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-border bg-surface/60 backdrop-blur-xl md:flex">
+        <div className="flex items-center gap-2 px-6 py-6">
+          <span className="text-2xl">🪐</span>
+          <span className="text-xl font-bold tracking-tight">Hubben</span>
+        </div>
+        <nav className="flex-1 space-y-1 px-3">
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              className={({ isActive }) =>
+                `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+                  isActive ? 'bg-accent/15 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+                }`
+              }
+            >
+              <span aria-hidden>{item.emoji}</span>
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="border-t border-border px-4 py-4">
+          <p className="mb-2 truncate text-xs text-muted" title={userEmail}>{userEmail}</p>
+          <button
+            onClick={() => supabase.auth.signOut()}
+            className="w-full rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-card-hover hover:text-ink"
+          >
+            Logga ut
+          </button>
+        </div>
+      </aside>
+
+      {/* Toppbar (mobil) */}
+      <header className="fixed inset-x-0 top-0 z-40 flex items-center justify-between border-b border-border bg-surface/80 px-4 py-3 backdrop-blur-xl md:hidden">
+        <div className="flex items-center gap-2">
+          <span className="text-xl">🪐</span>
+          <span className="font-bold">Hubben</span>
+        </div>
+        <button onClick={() => supabase.auth.signOut()} className="text-xs text-muted">Logga ut</button>
+      </header>
+
+      {/* Innehåll */}
+      <main className="min-w-0 flex-1 px-4 pb-24 pt-16 md:ml-60 md:px-8 md:pb-10 md:pt-8">
+        <div className="mx-auto max-w-6xl">{children}</div>
+      </main>
+
+      {/* Bottennav (mobil) */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex justify-around border-t border-border bg-surface/90 py-2 backdrop-blur-xl md:hidden">
+        {navItems.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.to === '/'}
+            className={({ isActive }) => `flex flex-col items-center gap-0.5 rounded-lg px-2 py-1 text-[10px] ${isActive ? 'text-accent-soft' : 'text-muted'}`}
+          >
+            <span className="text-base" aria-hidden>{item.emoji}</span>
+            {item.label.split(' ')[0]}
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  )
+}
