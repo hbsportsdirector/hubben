@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import Layout from './components/Layout'
 import Login from './pages/Login'
+import ChangePassword from './pages/ChangePassword'
 import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
 import Habits from './pages/Habits'
@@ -28,6 +29,7 @@ export default function App() {
 
   if (loading) return <div className="flex min-h-screen items-center justify-center"><Spinner /></div>
   if (!session) return <Login />
+  if (session.user.user_metadata?.must_change_password === true) return <ChangePassword />
 
   return (
     <Layout userEmail={session.user.email ?? ''}>
