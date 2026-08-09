@@ -88,6 +88,11 @@ export default function Mail() {
   const [synkarMapp, setSynkarMapp] = useState<string | null>(null)
   const [visaFlytt, setVisaFlytt] = useState(false)
   const [flyttar, setFlyttar] = useState(false)
+  const [valda, setValda] = useState<Set<string>>(new Set())
+  const [sistKlickad, setSistKlickad] = useState<number | null>(null)
+  const [visaBulkFlytt, setVisaBulkFlytt] = useState(false)
+  const [bulkSok, setBulkSok] = useState('')
+  const [bulkArbetar, setBulkArbetar] = useState<string | null>(null)
   const [visaNytt, setVisaNytt] = useState(false)
   const [synkar, setSynkar] = useState(false)
   const [senastSynk, setSenastSynk] = useState<string | null>(null)
@@ -231,6 +236,57 @@ export default function Mail() {
 
   const kontoAv = (id: string) => konton.find((k) => k.id === id)
 
+  /** Klick på kryssrutan. Shift markerar hela spannet från förra klicket. */
+  function vaxlaVald(index: number, shift: boolean) {
+    const ny = new Set(valda)
+    if (shift && sistKlickad !== null) {
+      const [a, b] = [Math.min(sistKlickad, index), Math.max(sistKlickad, index)]
+      const paSatt = !ny.has(mejl[index].id)
+      for (let i = a; i <= b; i++) {
+        if (paSatt) ny.add(mejl[i].id)
+        else ny.delete(mejl[i].id)
+      }
+    } else {
+      const id = mejl[index].id
+      if (ny.has(id)) ny.delete(id)
+      else ny.add(id)
+    }
+    setValda(ny)
+    setSistKlickad(index)
+  }
+
+  async function bulkFlytta(mappId: string) {
+    const mal = mappar.find((m) => m.id === mappId)
+    if (!mal) return
+    setVisaBulkFlytt(false)
+    setBulkArbetar('Flyttar…')
+    try {
+      const ids = [...valda]
+      const res = await anropaFunktion('mail-move-bulk', { messageIds: ids, targetFolderId: mappId })
+      // Mejl på andra konton måste gå den långsamma vägen, ett i taget
+      const kvar: string[] = res?.kraverKontobyte ?? []
+      for (let i = 0; i < kvar.length; i++) {
+        setBulkArbetar(`Flyttar mellan konton (${i + 1}/${kvar.length})…`)
+        await anropaFunktion('mail-move-x', { messageId: kvar[i], targetFolderId: mappId })
+      }
+      setValda(new Set())
+      setValdId(null)
+      await laddaMejl()
+      await laddaAntal()
+      await laddaMeta()
+    } finally {
+      setBulkArbetar(null)
+    }
+  }
+
+  async function bulkUppdatera(patch: Partial<Mejl>) {
+    const ids = [...valda]
+    setMejl((prev) => prev.map((m) => (valda.has(m.id) ? { ...m, ...patch } : m)))
+    await supabase.from('hub_messages').update(patch).in('id', ids)
+    setValda(new Set())
+    laddaMejl(); laddaAntal()
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -358,20 +414,101 @@ export default function Mail() {
 
         {/* Lista */}
         <div className="flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-border bg-card lg:w-88 xl:w-96">
+          {/* Åtgärdsrad när något är markerat */}
+          {valda.size > 0 && (
+            <div className="relative flex flex-wrap items-center gap-1 border-b border-border bg-accent/10 px-2 py-2">
+              <span className="px-1 text-xs font-semibold text-accent-soft">{valda.size} markerade</span>
+              <button
+                onClick={() => { setVisaBulkFlytt(!visaBulkFlytt); setBulkSok('') }}
+                disabled={!!bulkArbetar}
+                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink disabled:opacity-50"
+              >
+                📁 Flytta
+              </button>
+              <button
+                onClick={() => bulkUppdatera({ reply_later: true, reply_later_at: new Date().toISOString() } as Partial<Mejl>)}
+                disabled={!!bulkArbetar}
+                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink disabled:opacity-50"
+              >
+                ↩️ Svara senare
+              </button>
+              <button
+                onClick={() => bulkUppdatera({ seen: true })}
+                disabled={!!bulkArbetar}
+                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink disabled:opacity-50"
+              >
+                Markera läst
+              </button>
+              <button onClick={() => setValda(new Set())} className="ml-auto rounded-lg px-2 py-1 text-xs text-muted hover:text-ink">
+                Avmarkera
+              </button>
+              {bulkArbetar && <span className="w-full px-1 text-[11px] text-accent-soft">{bulkArbetar}</span>}
+
+              {visaBulkFlytt && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setVisaBulkFlytt(false)} />
+                  <div className="absolute left-2 top-full z-30 mt-1 w-80 overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+                    <input
+                      autoFocus
+                      value={bulkSok}
+                      onChange={(e) => setBulkSok(e.target.value)}
+                      placeholder="Sök mapp…"
+                      className="w-full border-b border-border bg-transparent px-3 py-2.5 text-sm text-ink outline-none placeholder:text-muted/60"
+                    />
+                    <ul className="max-h-72 overflow-y-auto p-1">
+                      {mappar
+                        .filter((m) => m.path.toLowerCase().includes(bulkSok.toLowerCase()))
+                        .slice(0, 40)
+                        .map((m) => {
+                          const mk = konton.find((k) => k.id === m.account_id)
+                          return (
+                            <li key={m.id}>
+                              <button
+                                onClick={() => bulkFlytta(m.id)}
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-accent/15 hover:text-ink"
+                              >
+                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: mk?.color ?? '#8b95ad' }} />
+                                <span className="truncate">{m.path.replace(/^INBOX[./]/, '').replace(/^\[Gmail\]\//, '')}</span>
+                              </button>
+                            </li>
+                          )
+                        })}
+                    </ul>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div ref={listRef} className="flex-1 overflow-y-auto">
             {laddar ? <Spinner /> : mejl.length === 0 ? (
               <EmptyState emoji="✨" text={sok ? 'Inga träffar.' : 'Tomt här.'} />
             ) : (
-              mejl.map((m) => {
+              mejl.map((m, index) => {
                 const namn = m.from_name || m.from_email || '(okänd)'
                 const konto = kontoAv(m.account_id)
+                const markerad = valda.has(m.id)
                 return (
-                  <button
+                  <div
                     key={m.id}
-                    onClick={() => { setValdId(m.id); if (!m.seen) uppdatera(m.id, { seen: true }) }}
-                    className={`flex w-full gap-3 border-l-2 border-b border-b-border/50 px-3 py-3 text-left transition-colors ${
-                      valdId === m.id ? 'border-l-accent bg-accent/10' : 'border-l-transparent hover:bg-card-hover'
+                    className={`group/rad flex w-full items-start gap-2 border-l-2 border-b border-b-border/50 pl-2 pr-3 py-3 transition-colors ${
+                      markerad ? 'border-l-accent bg-accent/15'
+                        : valdId === m.id ? 'border-l-accent bg-accent/10' : 'border-l-transparent hover:bg-card-hover'
                     }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={markerad}
+                      onChange={() => { /* hanteras i onClick för att fånga shift */ }}
+                      onClick={(e) => { e.stopPropagation(); vaxlaVald(index, e.shiftKey) }}
+                      aria-label={`Markera mejl från ${namn}`}
+                      className={`mt-3 h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--color-accent) transition-opacity ${
+                        valda.size > 0 ? 'opacity-100' : 'opacity-0 group-hover/rad:opacity-100'
+                      }`}
+                    />
+                  <button
+                    onClick={() => { setValdId(m.id); if (!m.seen) uppdatera(m.id, { seen: true }) }}
+                    className="flex min-w-0 flex-1 gap-3 text-left"
                   >
                     <span className="relative shrink-0">
                       <span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: avatarFarg(namn) }}>
@@ -394,6 +531,7 @@ export default function Mail() {
                       <span className="mt-0.5 block truncate text-[11px] text-muted/70">{m.from_email}</span>
                     </span>
                   </button>
+                  </div>
                 )
               })
             )}
