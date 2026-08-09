@@ -3,6 +3,7 @@ import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { Spinner, EmptyState } from '../components/ui'
+import { Bilagor } from '../components/Bilagor'
 
 /** Lådor enligt HEY-modellen — Reply Later och Bubble Up spänner över alla konton. */
 type Lada = 'imbox' | 'feed' | 'papertrail' | 'reply_later' | 'bubble_up'
@@ -113,6 +114,17 @@ export default function Mail() {
     return await res.json()
   }
 
+  /** Betar av förhämtningskön omgång för omgång. Tyst i bakgrunden — går
+   *  något fel får nästa synk försöka igen i stället för att störa. */
+  async function forhamtaAllt() {
+    for (let omgang = 0; omgang < 40; omgang++) {
+      try {
+        const r = await anropaFunktion('mail-prefetch', {})
+        if (r?.fel || r?.klart) return
+      } catch { return }
+    }
+  }
+
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
       supabase.from('hub_mail_accounts').select('id, label, color, email, signature').eq('active', true).order('sort_order'),
@@ -185,8 +197,10 @@ export default function Mail() {
       await laddaMejl()
       await laddaAntal()
       await laddaMeta()
-      // Hämta brödtexter i bakgrunden så att öppna mejl blir en databasläsning
-      anropaFunktion('mail-prefetch', {}).catch(() => {})
+      // Hämta brödtexter och kartlägg bilagor i bakgrunden, så att öppna ett
+      // mejl blir en databasläsning. Funktionen tar 25 åt gången och säger
+      // till när den är klar — kör vidare tills kön är tom.
+      forhamtaAllt()
     } finally {
       setSynkar(false)
     }
@@ -564,6 +578,7 @@ export default function Mail() {
                         {m.flagged && <span className="shrink-0 text-[11px]">⭐</span>}
                         {m.reply_later && <span className="shrink-0 text-[11px]">↩️</span>}
                         <span className="truncate">{m.subject || '(inget ämne)'}</span>
+                        {m.has_attachments && <span className="ml-auto shrink-0 text-[11px] text-muted" title="Har bilagor">📎</span>}
                       </span>
                       <span className="mt-0.5 block truncate text-[11px] text-muted/70">{m.from_email}</span>
                     </span>
@@ -1050,6 +1065,9 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
           </div>
         </div>
       </div>
+
+      {/* Bilagelisten ligger utanför det som scrollar — den ska alltid synas */}
+      <Bilagor msgId={mejl.id} aktiv={!hamtar} />
 
       <div className="flex-1 overflow-y-auto">
         <div className="px-6 py-5">

@@ -5,3 +5,6 @@ dist
 .env
 .env.local
 *.local
+
+# pdf.js-resurser kopieras ur node_modules vid bygget
+public/pdfjs/

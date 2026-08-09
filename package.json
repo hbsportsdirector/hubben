@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/kopiera-pdf-resurser.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/kopiera-pdf-resurser.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
@@ -12,6 +14,7 @@
     "@supabase/supabase-js": "^2.49.0",
     "@types/react-big-calendar": "^1.16.3",
     "date-fns": "^4.1.0",
+    "pdfjs-dist": "^6.2.108",
     "react": "^19.1.0",
     "react-big-calendar": "^1.20.0",
     "react-dom": "^19.1.0",
