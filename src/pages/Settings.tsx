@@ -6,11 +6,11 @@ import type { HubMailAccount } from '../lib/types'
 import { Card, SectionTitle, Button, Input, Label, Spinner } from '../components/ui'
 
 interface Testsvar {
-  label: string
+  // Från imap-test
+  label?: string
   epost?: string
   inloggad?: boolean
   serversvar?: string
-  fel?: string
   notering?: string
   antalIInkorgen?: number | null
   antalMappar?: number
@@ -18,6 +18,15 @@ interface Testsvar {
   harCONDSTORE?: boolean
   harQRESYNC?: boolean
   harIDLE?: boolean
+  // Från mail-sync
+  konto?: string
+  nya?: number
+  iInkorgen?: number
+  msTotalt?: number
+  skrivfel?: string
+  uidvalidityBytt?: boolean
+  // Gemensamt
+  fel?: string
 }
 
 export default function Settings() {
@@ -35,20 +44,20 @@ export default function Settings() {
 
   useEffect(() => { load() }, [load])
 
-  async function testaAnslutning() {
+  async function anropa(funktion: string, satt: (r: Testsvar[]) => void) {
     setTestar(true)
     setTest(null)
     setTestFel(null)
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) { setTestFel('Ingen aktiv session'); return }
-      const res = await fetch(`${supabaseUrl}/functions/v1/imap-test`, {
+      const res = await fetch(`${supabaseUrl}/functions/v1/${funktion}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey },
       })
       const json = await res.json()
       if (!res.ok || json.fel) setTestFel(json.fel ?? `Fel ${res.status}`)
-      else setTest(json.resultat as Testsvar[])
+      else satt(json.resultat as Testsvar[])
       load()
     } catch (e) {
       setTestFel(String(e))
@@ -88,9 +97,14 @@ export default function Settings() {
               Servern loggar in på riktigt mot varje konto och rapporterar vad den hittar.
             </p>
           </div>
-          <Button onClick={testaAnslutning} disabled={testar}>
-            {testar ? 'Testar…' : '🔌 Testa nu'}
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => anropa('imap-test', setTest)} disabled={testar}>
+              {testar ? 'Kör…' : '🔌 Testa'}
+            </Button>
+            <Button onClick={() => anropa('mail-sync', setTest)} disabled={testar}>
+              {testar ? 'Kör…' : '📥 Hämta mejl'}
+            </Button>
+          </div>
         </div>
 
         {testFel && (
@@ -99,45 +113,57 @@ export default function Settings() {
 
         {test && (
           <ul className="mt-4 space-y-3">
-            {test.map((r) => (
-              <li
-                key={r.label}
-                className={`rounded-xl border px-3 py-2.5 text-sm ${
-                  r.inloggad ? 'border-good/40 bg-good/10' : 'border-bad/40 bg-bad/10'
-                }`}
-              >
-                <p className="font-medium">
-                  {r.inloggad ? '✓' : '✗'} {r.label}
-                  <span className="ml-2 text-xs font-normal text-muted">{r.epost}</span>
-                </p>
-                {r.inloggad ? (
-                  <>
+            {test.map((r, i) => {
+              const namn = r.label ?? r.konto ?? 'Konto'
+              const problem = r.fel ?? r.skrivfel ?? r.serversvar
+              const lyckat = !problem && (r.inloggad === true || r.nya !== undefined)
+              return (
+                <li
+                  key={`${namn}-${i}`}
+                  className={`rounded-xl border px-3 py-2.5 text-sm ${
+                    lyckat ? 'border-good/40 bg-good/10' : 'border-bad/40 bg-bad/10'
+                  }`}
+                >
+                  <p className="font-medium">
+                    {lyckat ? '✓' : '✗'} {namn}
+                    {r.epost && <span className="ml-2 text-xs font-normal text-muted">{r.epost}</span>}
+                  </p>
+
+                  {problem && <p className="mt-1 text-xs text-bad">{problem}</p>}
+
+                  {r.nya !== undefined && !problem && (
                     <p className="mt-1 text-xs text-muted">
-                      {r.antalIInkorgen ?? '?'} mejl i inkorgen · {r.antalMappar ?? '?'} mappar · {r.totaltMs} ms
+                      <strong className="text-ink">{r.nya}</strong> mejl hämtade
+                      {r.iInkorgen !== undefined && ` · ${r.iInkorgen} i inkorgen`}
+                      {r.msTotalt && ` · ${(r.msTotalt / 1000).toFixed(1)} s`}
+                      {r.uidvalidityBytt && ' · brevlådan hade nollställts, hämtade om'}
                     </p>
-                    <p className="mt-1 flex flex-wrap gap-1.5 text-[10px]">
-                      {[
-                        ['CONDSTORE', r.harCONDSTORE],
-                        ['QRESYNC', r.harQRESYNC],
-                        ['IDLE', r.harIDLE],
-                      ].map(([namn, finns]) => (
-                        <span
-                          key={String(namn)}
-                          className={`rounded-full px-2 py-0.5 font-medium ${
-                            finns ? 'bg-good/20 text-good' : 'bg-surface text-muted'
-                          }`}
-                        >
-                          {finns ? '✓' : '–'} {String(namn)}
-                        </span>
-                      ))}
-                    </p>
-                    {r.notering && <p className="mt-1 text-xs text-warn">⚠ {r.notering}</p>}
-                  </>
-                ) : (
-                  <p className="mt-1 text-xs text-bad">{r.serversvar ?? r.fel ?? 'Inloggning misslyckades'}</p>
-                )}
-              </li>
-            ))}
+                  )}
+
+                  {r.inloggad && (
+                    <>
+                      <p className="mt-1 text-xs text-muted">
+                        {r.antalIInkorgen ?? '?'} mejl i inkorgen · {r.antalMappar ?? '?'} mappar · {r.totaltMs} ms
+                      </p>
+                      <p className="mt-1 flex flex-wrap gap-1.5 text-[10px]">
+                        {([['CONDSTORE', r.harCONDSTORE], ['QRESYNC', r.harQRESYNC], ['IDLE', r.harIDLE]] as const).map(
+                          ([n, finns]) => (
+                            <span
+                              key={n}
+                              className={`rounded-full px-2 py-0.5 font-medium ${finns ? 'bg-good/20 text-good' : 'bg-surface text-muted'}`}
+                            >
+                              {finns ? '✓' : '–'} {n}
+                            </span>
+                          ),
+                        )}
+                      </p>
+                    </>
+                  )}
+
+                  {r.notering && <p className="mt-1 text-xs text-warn">⚠ {r.notering}</p>}
+                </li>
+              )
+            })}
           </ul>
         )}
       </Card>
