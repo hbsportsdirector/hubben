@@ -29,8 +29,15 @@ interface Testsvar {
   fel?: string
 }
 
+interface Kontostatus {
+  mejl: number
+  mappar: number
+  senastSynkad: string | null
+}
+
 export default function Settings() {
   const [accounts, setAccounts] = useState<HubMailAccount[]>([])
+  const [status, setStatus] = useState<Record<string, Kontostatus>>({})
   const [loading, setLoading] = useState(true)
   const [testar, setTestar] = useState(false)
   const [test, setTest] = useState<Testsvar[] | null>(null)
@@ -39,6 +46,22 @@ export default function Settings() {
   const load = useCallback(async () => {
     const { data } = await supabase.from('hub_mail_accounts').select('*').order('sort_order')
     setAccounts(data ?? [])
+
+    // Status hämtas från databasen så den överlever sidbyten
+    const nytt: Record<string, Kontostatus> = {}
+    for (const acc of data ?? []) {
+      const [{ count: mejl }, { data: mappar }] = await Promise.all([
+        supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('account_id', acc.id),
+        supabase.from('hub_folders').select('last_synced_at').eq('account_id', acc.id),
+      ])
+      const senast = (mappar ?? [])
+        .map((f: { last_synced_at: string | null }) => f.last_synced_at)
+        .filter(Boolean)
+        .sort()
+        .pop() ?? null
+      nytt[acc.id] = { mejl: mejl ?? 0, mappar: (mappar ?? []).length, senastSynkad: senast }
+    }
+    setStatus(nytt)
     setLoading(false)
   }, [])
 
@@ -97,9 +120,12 @@ export default function Settings() {
               Servern loggar in på riktigt mot varje konto och rapporterar vad den hittar.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="ghost" onClick={() => anropa('imap-test', setTest)} disabled={testar}>
               {testar ? 'Kör…' : '🔌 Testa'}
+            </Button>
+            <Button variant="ghost" onClick={() => anropa('mail-folders', setTest)} disabled={testar}>
+              {testar ? 'Kör…' : '📁 Läs mappar'}
             </Button>
             <Button onClick={() => anropa('mail-sync', setTest)} disabled={testar}>
               {testar ? 'Kör…' : '📥 Hämta mejl'}
@@ -171,14 +197,14 @@ export default function Settings() {
       <div className="space-y-4">
         <SectionTitle>Mejlkonton</SectionTitle>
         {accounts.map((acc) => (
-          <AccountCard key={acc.id} account={acc} onSaved={load} />
+          <AccountCard key={acc.id} account={acc} status={status[acc.id]} onSaved={load} />
         ))}
       </div>
     </div>
   )
 }
 
-function AccountCard({ account, onSaved }: { account: HubMailAccount; onSaved: () => void }) {
+function AccountCard({ account, status, onSaved }: { account: HubMailAccount; status?: Kontostatus; onSaved: () => void }) {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'fel'; text: string } | null>(null)
@@ -242,8 +268,20 @@ function AccountCard({ account, onSaved }: { account: HubMailAccount; onSaved: (
       </div>
 
       {account.imap_host && (
-        <p className="mb-3 text-xs text-muted">
+        <p className="mb-2 text-xs text-muted">
           Inkommande {account.imap_host}:{account.imap_port} · Utgående {account.smtp_host}:{account.smtp_port}
+        </p>
+      )}
+
+      {status && (status.mejl > 0 || status.mappar > 0) && (
+        <p className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-surface px-3 py-2 text-xs">
+          <span><strong className="text-ink">{status.mejl}</strong> <span className="text-muted">mejl hämtade</span></span>
+          <span><strong className="text-ink">{status.mappar}</strong> <span className="text-muted">mappar</span></span>
+          {status.senastSynkad && (
+            <span className="text-muted">
+              senast {format(parseISO(status.senastSynkad), 'd MMM HH:mm', { locale: sv })}
+            </span>
+          )}
         </p>
       )}
 
