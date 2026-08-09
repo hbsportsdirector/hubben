@@ -95,6 +95,7 @@ export default function Mail() {
   const [bulkArbetar, setBulkArbetar] = useState<string | null>(null)
   const [visaNytt, setVisaNytt] = useState(false)
   const [misslyckades, setMisslyckades] = useState<string | null>(null)
+  const [enkelFlytt, setEnkelFlytt] = useState<Mejl | null>(null)
   const [synkar, setSynkar] = useState(false)
   const [senastSynk, setSenastSynk] = useState<string | null>(null)
   const [nyaSenast, setNyaSenast] = useState<number | null>(null)
@@ -475,39 +476,7 @@ export default function Mail() {
               </button>
               {bulkArbetar && <span className="w-full px-1 text-[11px] text-accent-soft">{bulkArbetar}</span>}
 
-              {visaBulkFlytt && (
-                <>
-                  <div className="fixed inset-0 z-20" onClick={() => setVisaBulkFlytt(false)} />
-                  <div className="absolute left-2 top-full z-30 mt-1 w-80 overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
-                    <input
-                      autoFocus
-                      value={bulkSok}
-                      onChange={(e) => setBulkSok(e.target.value)}
-                      placeholder="Sök mapp…"
-                      className="w-full border-b border-border bg-transparent px-3 py-2.5 text-sm text-ink outline-none placeholder:text-muted/60"
-                    />
-                    <ul className="max-h-72 overflow-y-auto p-1">
-                      {mappar
-                        .filter((m) => m.path.toLowerCase().includes(bulkSok.toLowerCase()))
-                        .slice(0, 40)
-                        .map((m) => {
-                          const mk = konton.find((k) => k.id === m.account_id)
-                          return (
-                            <li key={m.id}>
-                              <button
-                                onClick={() => bulkFlytta(m.id)}
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-accent/15 hover:text-ink"
-                              >
-                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: mk?.color ?? '#8b95ad' }} />
-                                <span className="truncate">{m.path.replace(/^INBOX[./]/, '').replace(/^\[Gmail\]\//, '')}</span>
-                              </button>
-                            </li>
-                          )
-                        })}
-                    </ul>
-                  </div>
-                </>
-              )}
+              {/* Dialogen ligger utanför listan — se FlyttaDialog nedan */}
             </div>
           )}
 
@@ -584,7 +553,7 @@ export default function Mail() {
               mappar={mappar.filter((m) => m.id !== vald.folder_id)}
               konton={konton}
               visaFlytt={visaFlytt}
-              setVisaFlytt={setVisaFlytt}
+              setVisaFlytt={(v) => { setVisaFlytt(false); if (v) setEnkelFlytt(vald) }}
               flyttar={flyttar}
               onFlytta={(mappId) => { setVisaFlytt(false); flyttaOptimistiskt(vald, mappId) }}
               onRadera={() => flyttaOptimistiskt(vald, null, 'trash')}
@@ -613,6 +582,30 @@ export default function Mail() {
         </div>
       </div>
 
+      <FlyttaDialog
+        open={visaBulkFlytt}
+        onClose={() => setVisaBulkFlytt(false)}
+        antal={valda.size}
+        mappar={mappar}
+        konton={konton}
+        msgIds={[...valda]}
+        onValj={(mappId) => bulkFlytta(mappId)}
+      />
+
+      <FlyttaDialog
+        open={!!enkelFlytt}
+        onClose={() => setEnkelFlytt(null)}
+        antal={1}
+        mappar={mappar.filter((m) => m.id !== enkelFlytt?.folder_id)}
+        konton={konton}
+        msgIds={enkelFlytt ? [enkelFlytt.id] : []}
+        onValj={(mappId) => {
+          const m = enkelFlytt
+          setEnkelFlytt(null)
+          if (m) flyttaOptimistiskt(m, mappId)
+        }}
+      />
+
       {misslyckades && (
         <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl border border-bad/40 bg-card px-4 py-3 shadow-2xl">
           <p className="text-sm font-medium text-bad">Flytten misslyckades</p>
@@ -628,6 +621,125 @@ export default function Mail() {
         forvaltKonto={kontoFilter !== 'alla' ? kontoFilter : konton[0]?.id}
         onSkicka={(kropp) => anropaFunktion('mail-send', kropp)}
       />
+    </div>
+  )
+}
+
+interface Forslag { folder_id: string; path: string; name: string; account_id: string; traffar: number; anledning: string }
+
+/** Flyttdialog: stor yta, förslag överst, tangentbordsnavigering. */
+function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, onValj }: {
+  open: boolean
+  onClose: () => void
+  antal: number
+  mappar: Mapp[]
+  konton: Konto[]
+  msgIds: string[]
+  onValj: (mappId: string) => void
+}) {
+  const [sok, setSok] = useState('')
+  const [forslag, setForslag] = useState<Forslag[]>([])
+  const [markerad, setMarkerad] = useState(0)
+
+  useEffect(() => {
+    if (!open) return
+    setSok(''); setMarkerad(0); setForslag([])
+    supabase.rpc('hub_forslag_mapp', { p_msg_ids: msgIds }).then(({ data }) => setForslag((data ?? []) as Forslag[]))
+  }, [open, msgIds])
+
+  const traffar = mappar.filter((m) => {
+    const q = sok.toLowerCase().trim()
+    return !q || m.path.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)
+  })
+
+  if (!open) return null
+
+  const kortNamn = (p: string) => p.replace(/^INBOX[./]/, '').replace(/^\[Gmail\]\//, '')
+  const perKonto = konton.map((k) => ({ konto: k, mappar: traffar.filter((m) => m.account_id === k.id) })).filter((g) => g.mappar.length)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[6vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div className="relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <h3 className="font-semibold">Flytta {antal} {antal === 1 ? 'mejl' : 'mejl'} till…</h3>
+          <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">✕</button>
+        </div>
+
+        <input
+          autoFocus
+          value={sok}
+          onChange={(e) => { setSok(e.target.value); setMarkerad(0) }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setMarkerad((i) => Math.min(i + 1, traffar.length - 1)) }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setMarkerad((i) => Math.max(i - 1, 0)) }
+            if (e.key === 'Enter' && traffar[markerad]) onValj(traffar[markerad].id)
+            if (e.key === 'Escape') onClose()
+          }}
+          placeholder="Skriv för att söka bland dina mappar…"
+          className="w-full border-b border-border bg-transparent px-5 py-3 text-sm text-ink outline-none placeholder:text-muted/60"
+        />
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {forslag.length > 0 && !sok && (
+            <div className="mb-5">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Föreslagna</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {forslag.map((f) => {
+                  const mk = konton.find((k) => k.id === f.account_id)
+                  return (
+                    <button
+                      key={f.folder_id}
+                      onClick={() => onValj(f.folder_id)}
+                      className="flex items-start gap-2.5 rounded-xl border border-accent/30 bg-accent/10 px-3 py-2.5 text-left transition-colors hover:bg-accent/20"
+                    >
+                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: mk?.color ?? '#8b95ad' }} />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-ink">{kortNamn(f.path)}</span>
+                        <span className="block truncate text-[11px] text-muted">{f.anledning}</span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {perKonto.map((g) => (
+            <div key={g.konto.id} className="mb-5">
+              <p className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                <span className="h-2 w-2 rounded-full" style={{ background: g.konto.color }} />
+                {g.konto.label}
+              </p>
+              <div className="grid gap-1 sm:grid-cols-2">
+                {g.mappar.map((m) => {
+                  const i = traffar.indexOf(m)
+                  return (
+                    <button
+                      key={m.id}
+                      onMouseEnter={() => setMarkerad(i)}
+                      onClick={() => onValj(m.id)}
+                      className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+                        i === markerad ? 'bg-accent/15 text-ink' : 'text-muted hover:bg-card-hover hover:text-ink'
+                      }`}
+                    >
+                      <span aria-hidden>📁</span>
+                      <span className="truncate">{kortNamn(m.path)}</span>
+                      {(m.total_count ?? 0) > 0 && <span className="ml-auto text-[10px] text-muted/60">{m.total_count}</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+
+          {traffar.length === 0 && <p className="py-8 text-center text-sm text-muted">Inga mappar matchar "{sok}"</p>}
+        </div>
+
+        <p className="border-t border-border px-5 py-2 text-[10px] text-muted">
+          ↑↓ bläddra · Enter välj · Esc stäng
+        </p>
+      </div>
     </div>
   )
 }
