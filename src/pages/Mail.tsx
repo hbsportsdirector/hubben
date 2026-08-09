@@ -551,11 +551,13 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
                 </button>
               )}
               {visaHtml && kropp.html_body ? (
-                // Låst iframe: inga skript, inga formulär, ingen navigering
+                // Låst iframe: inga skript, inga formulär, ingen navigering.
+                // Vitt "papper" — mejl är formgivna för ljus bakgrund, och att
+                // tvinga ljus text gör dem oläsbara när de har egen ljus bakgrund.
                 <iframe
                   sandbox=""
-                  srcDoc={`<style>body{font-family:system-ui,sans-serif;color:#e5eaf5;background:transparent;font-size:14px;line-height:1.6}a{color:#818cf8}img{max-width:100%;height:auto}</style>${kropp.html_body}`}
-                  className="h-[55vh] w-full rounded-xl border border-border bg-surface"
+                  srcDoc={`<style>html,body{background:#ffffff;color:#1f2937;margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.6;padding:16px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}</style>${kropp.html_body}`}
+                  className="h-[55vh] w-full rounded-xl border border-border bg-white"
                   title="Mejlinnehåll"
                 />
               ) : (
