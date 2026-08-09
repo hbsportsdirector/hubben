@@ -37,6 +37,7 @@ interface Mapp {
   id: string
   path: string
   name: string
+  role: string | null
   account_id: string
   total_count: number | null
   unseen_count: number | null
@@ -115,7 +116,7 @@ export default function Mail() {
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
       supabase.from('hub_mail_accounts').select('id, label, color, email, signature').eq('active', true).order('sort_order'),
-      supabase.from('hub_folders').select('id, path, name, account_id, total_count, unseen_count, last_synced_at').eq('hidden', false).order('path'),
+      supabase.from('hub_folders').select('id, path, name, role, account_id, total_count, unseen_count, last_synced_at').eq('hidden', false).order('path'),
     ])
     setKonton(k.data ?? [])
     setMappar(m.data ?? [])
@@ -147,7 +148,11 @@ export default function Mail() {
     if (lada === 'reply_later') q = q.eq('reply_later', true)
     else if (lada === 'bubble_up') q = q.gt('bubble_up_at', nu)
     else {
+      // Lådorna visar bara post som ligger i en inkorgsmapp. Flyttas ett mejl
+      // till papperskorgen eller en egen mapp ska det lämna lådan.
+      const inkorgar = mappar.filter((f) => f.role === 'inbox').map((f) => f.id)
       q = q.eq('destination', lada).eq('reply_later', false).or(`bubble_up_at.is.null,bubble_up_at.lte.${nu}`)
+      if (inkorgar.length) q = q.in('folder_id', inkorgar)
     }
     if (kontoFilter !== 'alla') q = q.eq('account_id', kontoFilter)
     if (mappFilter) q = q.eq('folder_id', mappFilter)
@@ -156,7 +161,7 @@ export default function Mail() {
     const { data } = await q
     setMejl(data ?? [])
     setLaddar(false)
-  }, [lada, kontoFilter, mappFilter, sok])
+  }, [lada, kontoFilter, mappFilter, sok, mappar])
 
   useEffect(() => { laddaMeta() }, [laddaMeta])
   useEffect(() => { laddaMejl(); laddaAntal() }, [laddaMejl, laddaAntal])
