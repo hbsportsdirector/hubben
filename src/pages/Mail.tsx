@@ -73,6 +73,7 @@ export default function Mail() {
   const [antal, setAntal] = useState<Record<string, number>>({})
   const [synkarMapp, setSynkarMapp] = useState<string | null>(null)
   const [visaFlytt, setVisaFlytt] = useState(false)
+  const [flyttar, setFlyttar] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
   async function anropaFunktion(namn: string, kropp: Record<string, unknown>) {
@@ -334,16 +335,30 @@ export default function Mail() {
             <Lasruta
               mejl={vald}
               konto={kontoAv(vald.account_id)}
-              mappar={mappar.filter((m) => m.account_id === vald.account_id && m.id !== vald.folder_id)}
+              mappar={mappar.filter((m) => m.id !== vald.folder_id)}
+              konton={konton}
               visaFlytt={visaFlytt}
               setVisaFlytt={setVisaFlytt}
+              flyttar={flyttar}
               onFlytta={async (mappId) => {
+                const mal = mappar.find((m) => m.id === mappId)
+                if (!mal) return
+                const mellanKonton = mal.account_id !== vald.account_id
                 setVisaFlytt(false)
-                const svar = await anropaFunktion('mail-move', { messageId: vald.id, targetFolderId: mappId })
-                if (svar?.fel) { alert('Kunde inte flytta: ' + svar.fel); return }
-                setMejl((prev) => prev.filter((x) => x.id !== vald.id))
-                setValdId(null)
-                laddaAntal()
+                setFlyttar(true)
+                try {
+                  const svar = await anropaFunktion(
+                    mellanKonton ? 'mail-move-x' : 'mail-move',
+                    { messageId: vald.id, targetFolderId: mappId },
+                  )
+                  if (svar?.fel) { alert('Kunde inte flytta: ' + svar.fel); return }
+                  setMejl((prev) => prev.filter((x) => x.id !== vald.id))
+                  setValdId(null)
+                  laddaMeta()
+                  laddaAntal()
+                } finally {
+                  setFlyttar(false)
+                }
               }}
               onSvaraSenare={() => svaraSenare(vald)}
               onSkjutUpp={(h) => skjutUpp(vald, h)}
@@ -365,12 +380,14 @@ export default function Mail() {
   )
 }
 
-function Lasruta({ mejl, konto, mappar, visaFlytt, setVisaFlytt, onFlytta, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
+function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
   mejl: Mejl
   konto?: Konto
   mappar: Mapp[]
+  konton: Konto[]
   visaFlytt: boolean
   setVisaFlytt: (v: boolean) => void
+  flyttar: boolean
   onFlytta: (mappId: string) => void
   onSvaraSenare: () => void
   onSkjutUpp: (timmar: number) => void
@@ -416,7 +433,7 @@ function Lasruta({ mejl, konto, mappar, visaFlytt, setVisaFlytt, onFlytta, onSva
       <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-3 py-2">
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
         <Verktyg ikon="⏳" text="Skjut upp" onClick={() => onSkjutUpp(24)} />
-        <Verktyg ikon="📁" text="Flytta till…" aktiv={visaFlytt} onClick={() => { setVisaFlytt(!visaFlytt); setFlyttSok('') }} />
+        <Verktyg ikon="📁" text={flyttar ? 'Flyttar…' : 'Flytta till…'} aktiv={visaFlytt} onClick={() => { if (!flyttar) { setVisaFlytt(!visaFlytt); setFlyttSok('') } }} />
         <Verktyg ikon={mejl.flagged ? '⭐' : '☆'} text="" onClick={onStjarna} />
 
         {visaFlytt && (
@@ -432,18 +449,27 @@ function Lasruta({ mejl, konto, mappar, visaFlytt, setVisaFlytt, onFlytta, onSva
               />
               <ul className="max-h-72 overflow-y-auto p-1">
                 {traffar.length === 0 && <li className="px-3 py-4 text-center text-xs text-muted">Inga mappar matchar</li>}
-                {traffar.map((m) => (
-                  <li key={m.id}>
-                    <button
-                      onClick={() => onFlytta(m.id)}
-                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-accent/15 hover:text-ink"
-                    >
-                      <span aria-hidden>📁</span>
-                      <span className="truncate">{m.path.replace(/^INBOX[./]/, '')}</span>
-                      {(m.total_count ?? 0) > 0 && <span className="ml-auto text-[10px] text-muted/60">{m.total_count}</span>}
-                    </button>
-                  </li>
-                ))}
+                {traffar.map((m) => {
+                  const mk = konton.find((k) => k.id === m.account_id)
+                  const annatKonto = m.account_id !== mejl.account_id
+                  return (
+                    <li key={m.id}>
+                      <button
+                        onClick={() => onFlytta(m.id)}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-accent/15 hover:text-ink"
+                      >
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: mk?.color ?? '#8b95ad' }} title={mk?.label} />
+                        <span className="truncate">{m.path.replace(/^INBOX[./]/, '').replace(/^\[Gmail\]\//, '')}</span>
+                        {annatKonto && (
+                          <span className="shrink-0 rounded-full bg-warn/15 px-1.5 text-[9px] font-medium text-warn">
+                            {mk?.label}
+                          </span>
+                        )}
+                        {(m.total_count ?? 0) > 0 && <span className="ml-auto text-[10px] text-muted/60">{m.total_count}</span>}
+                      </button>
+                    </li>
+                  )
+                })}
               </ul>
             </div>
           </>
