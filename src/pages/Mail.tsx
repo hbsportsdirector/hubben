@@ -74,6 +74,9 @@ export default function Mail() {
   const [synkarMapp, setSynkarMapp] = useState<string | null>(null)
   const [visaFlytt, setVisaFlytt] = useState(false)
   const [flyttar, setFlyttar] = useState(false)
+  const [synkar, setSynkar] = useState(false)
+  const [senastSynk, setSenastSynk] = useState<string | null>(null)
+  const [nyaSenast, setNyaSenast] = useState<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
   async function anropaFunktion(namn: string, kropp: Record<string, unknown>) {
@@ -136,6 +139,41 @@ export default function Mail() {
   useEffect(() => { laddaMeta() }, [laddaMeta])
   useEffect(() => { laddaMejl(); laddaAntal() }, [laddaMejl, laddaAntal])
 
+  const synkaNu = useCallback(async (tyst = false) => {
+    if (synkar) return
+    setSynkar(true)
+    if (!tyst) setNyaSenast(null)
+    try {
+      const res = await anropaFunktion('mail-sync', {})
+      const nya = (res?.resultat ?? []).reduce((s: number, r: { nya?: number }) => s + (r.nya ?? 0), 0)
+      setNyaSenast(nya)
+      setSenastSynk(new Date().toISOString())
+      await laddaMejl()
+      await laddaAntal()
+      await laddaMeta()
+    } finally {
+      setSynkar(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [synkar, laddaMejl, laddaAntal, laddaMeta])
+
+  // Hämta vid öppning om det var ett tag sedan, och sedan varannan minut
+  useEffect(() => {
+    let stoppad = false
+    ;(async () => {
+      const { data } = await supabase.from('hub_folders')
+        .select('last_synced_at').eq('role', 'inbox').order('last_synced_at', { ascending: false }).limit(1)
+      const senast = data?.[0]?.last_synced_at ?? null
+      if (stoppad) return
+      setSenastSynk(senast)
+      const gammalt = !senast || Date.now() - new Date(senast).getTime() > 120_000
+      if (gammalt) synkaNu(true)
+    })()
+    const timer = setInterval(() => synkaNu(true), 120_000)
+    return () => { stoppad = true; clearInterval(timer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const vald = mejl.find((m) => m.id === valdId) ?? null
 
   async function uppdatera(id: string, patch: Partial<Mejl>) {
@@ -182,6 +220,23 @@ export default function Mail() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold tracking-tight">Mejl</h1>
+
+        <button
+          onClick={() => synkaNu(false)}
+          disabled={synkar}
+          className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-card-hover hover:text-ink disabled:opacity-60"
+          title={senastSynk ? `Senast hämtat ${format(parseISO(senastSynk), 'HH:mm', { locale: sv })}` : 'Aldrig hämtat'}
+        >
+          <span className={synkar ? 'inline-block animate-spin' : ''} aria-hidden>↻</span>
+          {synkar ? 'Hämtar…' : 'Hämta nya'}
+        </button>
+
+        {nyaSenast !== null && !synkar && (
+          <span className={`text-xs ${nyaSenast > 0 ? 'text-good' : 'text-muted'}`}>
+            {nyaSenast > 0 ? `+${nyaSenast} nya` : 'Inget nytt'}
+          </span>
+        )}
+
         <div className="relative min-w-56 flex-1">
           <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">🔍</span>
           <input
