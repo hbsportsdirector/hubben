@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
@@ -137,8 +137,14 @@ export default function Mail() {
     })
   }, [])
 
+  // Bara mapp-ID:na spelar roll för frågan. Som sträng byter den inte identitet
+  // varje gång mapplistan hämtas om, vilket annars ger onödiga omladdningar.
+  const inkorgsIds = useMemo(
+    () => mappar.filter((f) => f.role === 'inbox').map((f) => f.id).sort().join(','),
+    [mappar],
+  )
+
   const laddaMejl = useCallback(async () => {
-    setLaddar(true)
     const nu = new Date().toISOString()
     let q = supabase.from('hub_messages')
       .select('id, account_id, folder_id, subject, from_name, from_email, sent_at, seen, flagged, reply_later, bubble_up_at, destination, has_attachments, rfc_message_id')
@@ -150,7 +156,7 @@ export default function Mail() {
     else {
       // Lådorna visar bara post som ligger i en inkorgsmapp. Flyttas ett mejl
       // till papperskorgen eller en egen mapp ska det lämna lådan.
-      const inkorgar = mappar.filter((f) => f.role === 'inbox').map((f) => f.id)
+      const inkorgar = inkorgsIds ? inkorgsIds.split(',') : []
       q = q.eq('destination', lada).eq('reply_later', false).or(`bubble_up_at.is.null,bubble_up_at.lte.${nu}`)
       if (inkorgar.length) q = q.in('folder_id', inkorgar)
     }
@@ -159,9 +165,10 @@ export default function Mail() {
     if (sok.trim()) q = q.or(`subject.ilike.%${sok.trim()}%,from_name.ilike.%${sok.trim()}%,from_email.ilike.%${sok.trim()}%`)
 
     const { data } = await q
+    // Listan byts ut på plats — ingen spinner, inget hopp
     setMejl(data ?? [])
     setLaddar(false)
-  }, [lada, kontoFilter, mappFilter, sok, mappar])
+  }, [lada, kontoFilter, mappFilter, sok, inkorgsIds])
 
   useEffect(() => { laddaMeta() }, [laddaMeta])
   useEffect(() => { laddaMejl(); laddaAntal() }, [laddaMejl, laddaAntal])
@@ -321,10 +328,10 @@ export default function Mail() {
       setValda(new Set())
       setValdId(null)
 
-      // Servern är sanningen — läs om i stället för att lita på optimismen
+      // Servern är sanningen — läs om i stället för att lita på optimismen.
+      // Mapplistan rörs inte här; den ändras inte av en flytt.
       await laddaMejl()
       await laddaAntal()
-      await laddaMeta()
 
       if (res?.fel) {
         setMisslyckades(String(res.fel))
