@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
@@ -117,11 +117,15 @@ export default function Mail() {
   /** Betar av förhämtningskön omgång för omgång. Tyst i bakgrunden — går
    *  något fel får nästa synk försöka igen i stället för att störa. */
   async function forhamtaAllt() {
-    for (let omgang = 0; omgang < 40; omgang++) {
+    for (let omgang = 0; omgang < 20; omgang++) {
       try {
         const r = await anropaFunktion('mail-prefetch', {})
         if (r?.fel || r?.klart) return
       } catch { return }
+      // En omgång håller en IMAP-anslutning uppe i tiotals sekunder. Pausen
+      // gör att flytt och sändning kommer fram emellan i stället för att
+      // trängas med förhämtningen om kontots anslutningar.
+      await new Promise((r) => setTimeout(r, 3000))
     }
   }
 
@@ -136,10 +140,15 @@ export default function Mail() {
 
   const laddaAntal = useCallback(async () => {
     const nu = new Date().toISOString()
+    // Samma regel som listan: bara det som ligger i en inkorgsmapp räknas,
+    // annars fortsätter papperskorgen att synas i siffran bredvid lådan.
+    const olast = (lada: string) =>
+      supabase.from('hub_messages').select('*, hub_folders!inner(role)', { count: 'exact', head: true })
+        .eq('destination', lada).eq('seen', false).eq('hub_folders.role', 'inbox')
     const [imbox, feed, kvitto, senare, uppskjutna] = await Promise.all([
-      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('destination', 'imbox').eq('reply_later', false).eq('seen', false),
-      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('destination', 'feed').eq('seen', false),
-      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('destination', 'papertrail').eq('seen', false),
+      olast('imbox').eq('reply_later', false),
+      olast('feed'),
+      olast('papertrail'),
       supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('reply_later', true),
       supabase.from('hub_messages').select('*', { count: 'exact', head: true }).gt('bubble_up_at', nu),
     ])
@@ -149,17 +158,13 @@ export default function Mail() {
     })
   }, [])
 
-  // Bara mapp-ID:na spelar roll för frågan. Som sträng byter den inte identitet
-  // varje gång mapplistan hämtas om, vilket annars ger onödiga omladdningar.
-  const inkorgsIds = useMemo(
-    () => mappar.filter((f) => f.role === 'inbox').map((f) => f.id).sort().join(','),
-    [mappar],
-  )
-
   const laddaMejl = useCallback(async () => {
     const nu = new Date().toISOString()
+    // Kopplingen till mappen görs i databasen, inte mot mapplistan i minnet.
+    // Tidigare hoppades mappfiltret över när mapplistan ännu var tom, och då
+    // låg papperskorgen kvar i inkorgen tills nästa omladdning.
     let q = supabase.from('hub_messages')
-      .select('id, account_id, folder_id, subject, from_name, from_email, sent_at, seen, flagged, reply_later, bubble_up_at, destination, has_attachments, rfc_message_id')
+      .select('id, account_id, folder_id, subject, from_name, from_email, sent_at, seen, flagged, reply_later, bubble_up_at, destination, has_attachments, rfc_message_id, hub_folders!inner(role)')
       .order('sent_at', { ascending: false })
       .limit(200)
 
@@ -168,19 +173,21 @@ export default function Mail() {
     else {
       // Lådorna visar bara post som ligger i en inkorgsmapp. Flyttas ett mejl
       // till papperskorgen eller en egen mapp ska det lämna lådan.
-      const inkorgar = inkorgsIds ? inkorgsIds.split(',') : []
-      q = q.eq('destination', lada).eq('reply_later', false).or(`bubble_up_at.is.null,bubble_up_at.lte.${nu}`)
-      if (inkorgar.length) q = q.in('folder_id', inkorgar)
+      q = q.eq('destination', lada).eq('reply_later', false)
+        .eq('hub_folders.role', 'inbox')
+        .or(`bubble_up_at.is.null,bubble_up_at.lte.${nu}`)
     }
     if (kontoFilter !== 'alla') q = q.eq('account_id', kontoFilter)
     if (mappFilter) q = q.eq('folder_id', mappFilter)
     if (sok.trim()) q = q.or(`subject.ilike.%${sok.trim()}%,from_name.ilike.%${sok.trim()}%,from_email.ilike.%${sok.trim()}%`)
 
     const { data } = await q
+    // Den hopkopplade mappen behövs bara för filtret — listan vill inte ha den
+    const rader = (data ?? []).map(({ hub_folders: _mapp, ...m }) => m as Mejl)
     // Listan byts ut på plats — ingen spinner, inget hopp
-    setMejl(data ?? [])
+    setMejl(rader)
     setLaddar(false)
-  }, [lada, kontoFilter, mappFilter, sok, inkorgsIds])
+  }, [lada, kontoFilter, mappFilter, sok])
 
   useEffect(() => { laddaMeta() }, [laddaMeta])
   useEffect(() => { laddaMejl(); laddaAntal() }, [laddaMejl, laddaAntal])
