@@ -1,160 +1,193 @@
-import { useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { format, parseISO, isToday, isYesterday } from 'date-fns'
+import { sv } from 'date-fns/locale'
+import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
+import { Spinner, EmptyState } from '../components/ui'
 
-/**
- * DESIGNSKISS för mejlklienten — påhittade mejl, ingen koppling till servern än.
- * Layoutidéer (mappkolumn, färgade initialringar, luftiga rader, svarsruta med
- * avatar) är inspirerade av Bulwark. Ingen kod därifrån är kopierad — Bulwark är
- * AGPL-licensierat och skulle smitta av sig på hela appen.
- */
+/** Lådor enligt HEY-modellen — Reply Later och Bubble Up spänner över alla konton. */
+type Lada = 'imbox' | 'feed' | 'papertrail' | 'reply_later' | 'bubble_up'
 
-interface DemoMail {
-  id: number
-  konto: 'handboll' | 'gmail' | 'outlook'
-  avsandare: string
-  adress: string
-  amne: string
-  utdrag: string
-  brodtext: string[]
-  tid: string
-  grupp: 'Idag' | 'Igår' | 'Tidigare'
-  olast: boolean
-  stjarna: boolean
-  bilaga?: string
-  itrad?: number
-  taggar?: string[]
+const LADOR: { id: Lada; namn: string; ikon: string; tangent: string }[] = [
+  { id: 'imbox', namn: 'Inkorg', ikon: '📥', tangent: '1' },
+  { id: 'feed', namn: 'Flödet', ikon: '📰', tangent: '2' },
+  { id: 'papertrail', namn: 'Kvitton', ikon: '🧾', tangent: '3' },
+  { id: 'reply_later', namn: 'Svara senare', ikon: '↩️', tangent: '4' },
+  { id: 'bubble_up', namn: 'Uppskjutna', ikon: '⏳', tangent: '6' },
+]
+
+interface Mejl {
+  id: string
+  account_id: string
+  folder_id: string
+  subject: string
+  from_name: string | null
+  from_email: string | null
+  sent_at: string | null
+  seen: boolean
+  flagged: boolean
+  reply_later: boolean
+  bubble_up_at: string | null
+  destination: string
+  has_attachments: boolean
+  rfc_message_id: string | null
 }
 
-const KONTON = {
-  handboll: { namn: 'Täby Handboll', farg: '#38bdf8' },
-  gmail: { namn: 'Gmail', farg: '#f87171' },
-  outlook: { namn: 'Outlook', farg: '#818cf8' },
-}
+interface Konto { id: string; label: string; color: string; email: string }
+interface Mapp { id: string; path: string; name: string; account_id: string; total_count: number | null; unseen_count: number | null }
 
-const TAGGAR: Record<string, string> = {
-  Styrelse: '#a78bfa',
-  Förälder: '#34d399',
-  Faktura: '#fbbf24',
-  Förbund: '#38bdf8',
-}
-
-/** Färg på initialringen härleds ur namnet — samma avsändare får alltid samma färg. */
 const AVATARFARGER = ['#3987e5', '#199e70', '#c98500', '#9085e9', '#e66767', '#d55181', '#d95926', '#0ea5e9']
-function avatarFarg(namn: string) {
+function avatarFarg(n: string) {
   let h = 0
-  for (let i = 0; i < namn.length; i++) h = (h * 31 + namn.charCodeAt(i)) >>> 0
+  for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0
   return AVATARFARGER[h % AVATARFARGER.length]
 }
-function initialer(namn: string) {
-  return namn.split(' ').filter(Boolean).map((d) => d[0]).slice(0, 2).join('').toUpperCase()
+function initialer(n: string) {
+  return n.split(/[\s@.]+/).filter(Boolean).map((d) => d[0]).slice(0, 2).join('').toUpperCase()
+}
+function visaTid(iso: string | null) {
+  if (!iso) return ''
+  const d = parseISO(iso)
+  if (isToday(d)) return format(d, 'HH:mm')
+  if (isYesterday(d)) return 'Igår'
+  return format(d, 'd MMM', { locale: sv })
 }
 
-const DEMO: DemoMail[] = [
-  {
-    id: 1, konto: 'handboll', avsandare: 'Anna Berg', adress: 'anna.berg@tabyhandboll.se',
-    amne: 'Kallelse: Styrelsemöte 18 augusti',
-    utdrag: 'Hej Per, bifogar dagordning och förra protokollet inför mötet. Vi behöver särskilt gå igenom budgeten för vårsäsongen och beslutet om nya halltider.',
-    brodtext: [
-      'Hej Per,',
-      'Bifogar dagordning och förra protokollet inför mötet den 18 augusti. Vi behöver särskilt gå igenom budgeten för vårsäsongen och beslutet om nya halltider.',
-      'Kan du förbereda en kort dragning om spelartruppen? Ungefär tio minuter räcker.',
-      'Hälsningar,\nAnna',
-    ],
-    tid: '09:42', grupp: 'Idag', olast: true, stjarna: false, bilaga: 'Dagordning_18aug.pdf', itrad: 3, taggar: ['Styrelse'],
-  },
-  {
-    id: 2, konto: 'handboll', avsandare: 'Tibblehallen Bokning', adress: 'bokning@tibblehallen.se',
-    amne: 'Bekräftelse: Halltid vecka 34–38',
-    utdrag: 'Din bokning är bekräftad. Måndagar 16:00–18:00 och torsdagar 17:00–19:00 i A-hallen, vecka 34 till 38.',
-    brodtext: ['Din bokning är bekräftad.', 'Måndagar 16:00–18:00 och torsdagar 17:00–19:00 i A-hallen, vecka 34 till 38.', 'Avbokning senast 48 timmar innan.'],
-    tid: '08:15', grupp: 'Idag', olast: true, stjarna: false,
-  },
-  {
-    id: 3, konto: 'gmail', avsandare: 'Marcus Öberg', adress: 'marcus.oberg@gmail.com',
-    amne: 'Re: Spelartrupp U18',
-    utdrag: 'Låter bra! Jag tar med de tre från U16 på torsdagens pass så får vi se hur de fungerar ihop med resten.',
-    brodtext: ['Låter bra!', 'Jag tar med de tre från U16 på torsdagens pass så får vi se hur de fungerar ihop med resten.', 'Ses på träningen.'],
-    tid: 'Igår', grupp: 'Igår', olast: false, stjarna: true, itrad: 5,
-  },
-  {
-    id: 4, konto: 'handboll', avsandare: 'Svenska Handbollförbundet', adress: 'info@svenskhandboll.se',
-    amne: 'Nya tävlingsbestämmelser 2026/27',
-    utdrag: 'Information till samtliga föreningar om ändringar i tävlingsbestämmelserna inför kommande säsong. De viktigaste rör dispensregler.',
-    brodtext: ['Information till samtliga föreningar.', 'Inför säsongen 2026/27 träder nya tävlingsbestämmelser i kraft. De viktigaste ändringarna rör dispensregler för överåriga spelare samt anmälningstider.', 'Fullständigt dokument finns bifogat.'],
-    tid: 'Igår', grupp: 'Igår', olast: false, stjarna: false, bilaga: 'TB_2026-27.pdf', taggar: ['Förbund'],
-  },
-  {
-    id: 5, konto: 'gmail', avsandare: 'Erik Nilsson', adress: 'erik.nilsson@hotmail.com',
-    amne: 'Fråga om cupen i Södertälje',
-    utdrag: 'Hej! Undrar vad som gäller med transport till cupen — samåker vi eller tar alla sig dit själva?',
-    brodtext: ['Hej!', 'Undrar vad som gäller med transport till cupen — samåker vi eller tar alla sig dit själva?', 'Mvh Erik, pappa till Wilma'],
-    tid: '6 aug', grupp: 'Tidigare', olast: false, stjarna: false, taggar: ['Förälder'],
-  },
-  {
-    id: 6, konto: 'outlook', avsandare: 'One.com', adress: 'noreply@one.com',
-    amne: 'Din faktura är tillgänglig',
-    utdrag: 'Fakturan för webbhotell och e-post för perioden augusti–oktober finns nu att hämta i kontrollpanelen.',
-    brodtext: ['Fakturan för webbhotell och e-post för perioden augusti–oktober finns nu att hämta i kontrollpanelen.', 'Belopp: 349 kr. Förfaller 25 augusti.'],
-    tid: '5 aug', grupp: 'Tidigare', olast: false, stjarna: false, taggar: ['Faktura'],
-  },
-]
-
-const MAPPAR = [
-  { id: 'inkorg', namn: 'Inkorg', ikon: '📥', antal: 2 },
-  { id: 'stjarna', namn: 'Stjärnmärkt', ikon: '⭐', antal: 0 },
-  { id: 'skickat', namn: 'Skickat', ikon: '📤', antal: 0 },
-  { id: 'utkast', namn: 'Utkast', ikon: '📝', antal: 1 },
-  { id: 'arkiv', namn: 'Arkiv', ikon: '📦', antal: 0 },
-  { id: 'skrap', namn: 'Skräppost', ikon: '🚫', antal: 0 },
-]
-
 export default function Mail() {
-  const [vald, setVald] = useState<DemoMail>(DEMO[0])
-  const [mapp, setMapp] = useState('inkorg')
-  const [kontoFilter, setKontoFilter] = useState('alla')
+  const [lada, setLada] = useState<Lada>('imbox')
+  const [kontoFilter, setKontoFilter] = useState<string>('alla')
+  const [mappFilter, setMappFilter] = useState<string | null>(null)
   const [sok, setSok] = useState('')
+  const [mejl, setMejl] = useState<Mejl[]>([])
+  const [konton, setKonton] = useState<Konto[]>([])
+  const [mappar, setMappar] = useState<Mapp[]>([])
+  const [valdId, setValdId] = useState<string | null>(null)
+  const [laddar, setLaddar] = useState(true)
+  const [antal, setAntal] = useState<Record<string, number>>({})
+  const listRef = useRef<HTMLDivElement>(null)
 
-  const synliga = DEMO.filter((m) => kontoFilter === 'alla' || m.konto === kontoFilter)
-  const grupper: DemoMail['grupp'][] = ['Idag', 'Igår', 'Tidigare']
+  const laddaMeta = useCallback(async () => {
+    const [k, m] = await Promise.all([
+      supabase.from('hub_mail_accounts').select('id, label, color, email').eq('active', true).order('sort_order'),
+      supabase.from('hub_folders').select('id, path, name, account_id, total_count, unseen_count').eq('hidden', false).order('path'),
+    ])
+    setKonton(k.data ?? [])
+    setMappar(m.data ?? [])
+  }, [])
+
+  const laddaAntal = useCallback(async () => {
+    const nu = new Date().toISOString()
+    const [imbox, feed, kvitto, senare, uppskjutna] = await Promise.all([
+      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('destination', 'imbox').eq('reply_later', false).eq('seen', false),
+      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('destination', 'feed').eq('seen', false),
+      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('destination', 'papertrail').eq('seen', false),
+      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('reply_later', true),
+      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).gt('bubble_up_at', nu),
+    ])
+    setAntal({
+      imbox: imbox.count ?? 0, feed: feed.count ?? 0, papertrail: kvitto.count ?? 0,
+      reply_later: senare.count ?? 0, bubble_up: uppskjutna.count ?? 0,
+    })
+  }, [])
+
+  const laddaMejl = useCallback(async () => {
+    setLaddar(true)
+    const nu = new Date().toISOString()
+    let q = supabase.from('hub_messages')
+      .select('id, account_id, folder_id, subject, from_name, from_email, sent_at, seen, flagged, reply_later, bubble_up_at, destination, has_attachments, rfc_message_id')
+      .order('sent_at', { ascending: false })
+      .limit(200)
+
+    if (lada === 'reply_later') q = q.eq('reply_later', true)
+    else if (lada === 'bubble_up') q = q.gt('bubble_up_at', nu)
+    else {
+      q = q.eq('destination', lada).eq('reply_later', false).or(`bubble_up_at.is.null,bubble_up_at.lte.${nu}`)
+    }
+    if (kontoFilter !== 'alla') q = q.eq('account_id', kontoFilter)
+    if (mappFilter) q = q.eq('folder_id', mappFilter)
+    if (sok.trim()) q = q.or(`subject.ilike.%${sok.trim()}%,from_name.ilike.%${sok.trim()}%,from_email.ilike.%${sok.trim()}%`)
+
+    const { data } = await q
+    setMejl(data ?? [])
+    setLaddar(false)
+  }, [lada, kontoFilter, mappFilter, sok])
+
+  useEffect(() => { laddaMeta() }, [laddaMeta])
+  useEffect(() => { laddaMejl(); laddaAntal() }, [laddaMejl, laddaAntal])
+
+  const vald = mejl.find((m) => m.id === valdId) ?? null
+
+  async function uppdatera(id: string, patch: Partial<Mejl>) {
+    setMejl((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
+    await supabase.from('hub_messages').update(patch).eq('id', id)
+    laddaAntal()
+  }
+
+  async function svaraSenare(m: Mejl) {
+    await uppdatera(m.id, { reply_later: !m.reply_later, reply_later_at: m.reply_later ? null : new Date().toISOString() } as Partial<Mejl>)
+    if (lada !== 'reply_later') setMejl((prev) => prev.filter((x) => x.id !== m.id))
+  }
+
+  async function skjutUpp(m: Mejl, timmar: number) {
+    const nar = new Date(Date.now() + timmar * 3600_000).toISOString()
+    await uppdatera(m.id, { bubble_up_at: nar })
+    setMejl((prev) => prev.filter((x) => x.id !== m.id))
+  }
+
+  // Tangentbordstriage
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || e.metaKey || e.ctrlKey) return
+      const siffra = LADOR.find((l) => l.tangent === e.key)
+      if (siffra) { setLada(siffra.id); setMappFilter(null); setValdId(null); return }
+      if (!mejl.length) return
+      const i = mejl.findIndex((m) => m.id === valdId)
+      if (e.key === 'j') { e.preventDefault(); setValdId(mejl[Math.min(i + 1, mejl.length - 1)]?.id ?? mejl[0].id) }
+      if (e.key === 'k') { e.preventDefault(); setValdId(mejl[Math.max(i - 1, 0)]?.id ?? mejl[0].id) }
+      if (!vald) return
+      if (e.key === 'l') { e.preventDefault(); svaraSenare(vald) }
+      if (e.key === 'z') { e.preventDefault(); skjutUpp(vald, 24) }
+      if (e.key === 'u') { e.preventDefault(); uppdatera(vald.id, { seen: !vald.seen }) }
+      if (e.key === 's') { e.preventDefault(); uppdatera(vald.id, { flagged: !vald.flagged }) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  const kontoAv = (id: string) => konton.find((k) => k.id === id)
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">Mejl</h1>
-          <p className="text-[11px] text-warn">⚠ Designskiss — påhittade mejl, inget är kopplat än</p>
-        </div>
-        <div className="flex flex-1 items-center justify-end gap-2">
-          <div className="relative max-w-md flex-1">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">🔍</span>
-            <input
-              value={sok}
-              onChange={(e) => setSok(e.target.value)}
-              placeholder="Sök…  från:anna  har:bilaga"
-              className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-ink outline-none transition-colors placeholder:text-muted/60 focus:border-accent"
-            />
-          </div>
-          <button className="shrink-0 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft">
-            ✏️ Skriv nytt
-          </button>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-bold tracking-tight">Mejl</h1>
+        <div className="relative min-w-56 flex-1">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">🔍</span>
+          <input
+            value={sok}
+            onChange={(e) => setSok(e.target.value)}
+            placeholder="Sök i alla konton…"
+            className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-ink outline-none transition-colors placeholder:text-muted/60 focus:border-accent"
+          />
         </div>
       </div>
 
-      <div className="flex gap-3" style={{ height: 'calc(100vh - 9.5rem)' }}>
-        {/* Mappkolumn */}
-        <aside className="hidden w-48 shrink-0 flex-col gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-3 xl:flex">
+      <div className="flex gap-3" style={{ height: 'calc(100vh - 8.5rem)' }}>
+        {/* Lådor, konton och mappar */}
+        <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-3 xl:flex">
           <div>
-            <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Mappar</p>
-            {MAPPAR.map((m) => (
+            <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Lådor</p>
+            {LADOR.map((l) => (
               <button
-                key={m.id}
-                onClick={() => setMapp(m.id)}
+                key={l.id}
+                onClick={() => { setLada(l.id); setMappFilter(null); setValdId(null) }}
                 className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors ${
-                  mapp === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+                  lada === l.id && !mappFilter ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
                 }`}
               >
-                <span aria-hidden>{m.ikon}</span>
-                <span className="flex-1 truncate">{m.namn}</span>
-                {m.antal > 0 && <span className="text-[11px] font-semibold">{m.antal}</span>}
+                <span aria-hidden>{l.ikon}</span>
+                <span className="flex-1 truncate">{l.namn}</span>
+                {antal[l.id] > 0 && <span className="text-[11px] font-semibold">{antal[l.id]}</span>}
+                <kbd className="text-[9px] text-muted/50">{l.tangent}</kbd>
               </button>
             ))}
           </div>
@@ -162,209 +195,250 @@ export default function Mail() {
           <div>
             <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Konton</p>
             <button
-              onClick={() => setKontoFilter('alla')}
+              onClick={() => { setKontoFilter('alla'); setValdId(null) }}
               className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors ${
                 kontoFilter === 'alla' ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
               }`}
             >
-              <span className="h-2 w-2 rounded-full bg-muted" />
-              Alla konton
+              <span className="h-2 w-2 rounded-full bg-muted" /> Alla konton
             </button>
-            {Object.entries(KONTON).map(([k, v]) => (
+            {konton.map((k) => (
               <button
-                key={k}
-                onClick={() => setKontoFilter(k)}
+                key={k.id}
+                onClick={() => { setKontoFilter(k.id); setValdId(null) }}
                 className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors ${
-                  kontoFilter === k ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+                  kontoFilter === k.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
                 }`}
               >
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: v.farg }} />
-                <span className="truncate">{v.namn}</span>
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: k.color }} />
+                <span className="truncate">{k.label}</span>
               </button>
             ))}
           </div>
 
           <div>
-            <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Taggar</p>
-            {Object.entries(TAGGAR).map(([namn, farg]) => (
-              <button key={namn} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-muted transition-colors hover:bg-card-hover hover:text-ink">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: farg }} />
-                {namn}
-              </button>
-            ))}
+            <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              Mappar ({mappar.length})
+            </p>
+            <div className="max-h-64 overflow-y-auto">
+              {mappar
+                .filter((m) => kontoFilter === 'alla' || m.account_id === kontoFilter)
+                .map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => { setMappFilter(m.id); setValdId(null) }}
+                    title={m.path}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12px] transition-colors ${
+                      mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+                    }`}
+                  >
+                    <span className="truncate">{m.name}</span>
+                    {(m.total_count ?? 0) > 0 && <span className="ml-auto text-[10px] text-muted/70">{m.total_count}</span>}
+                  </button>
+                ))}
+            </div>
           </div>
         </aside>
 
-        {/* Meddelandelista */}
+        {/* Lista */}
         <div className="flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-border bg-card lg:w-88 xl:w-96">
-          <div className="flex-1 overflow-y-auto">
-            {grupper.map((g) => {
-              const iGrupp = synliga.filter((m) => m.grupp === g)
-              if (!iGrupp.length) return null
-              return (
-                <div key={g}>
-                  <p className="sticky top-0 z-10 border-b border-border/60 bg-card/95 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted backdrop-blur">
-                    {g}
-                  </p>
-                  {iGrupp.map((m) => (
-                    <MailRad key={m.id} mail={m} vald={vald.id === m.id} onClick={() => setVald(m)} />
-                  ))}
-                </div>
-              )
-            })}
+          <div ref={listRef} className="flex-1 overflow-y-auto">
+            {laddar ? <Spinner /> : mejl.length === 0 ? (
+              <EmptyState emoji="✨" text={sok ? 'Inga träffar.' : 'Tomt här.'} />
+            ) : (
+              mejl.map((m) => {
+                const namn = m.from_name || m.from_email || '(okänd)'
+                const konto = kontoAv(m.account_id)
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => { setValdId(m.id); if (!m.seen) uppdatera(m.id, { seen: true }) }}
+                    className={`flex w-full gap-3 border-l-2 border-b border-b-border/50 px-3 py-3 text-left transition-colors ${
+                      valdId === m.id ? 'border-l-accent bg-accent/10' : 'border-l-transparent hover:bg-card-hover'
+                    }`}
+                  >
+                    <span className="relative shrink-0">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: avatarFarg(namn) }}>
+                        {initialer(namn)}
+                      </span>
+                      {konto && (
+                        <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card" style={{ background: konto.color }} title={konto.label} />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-baseline justify-between gap-2">
+                        <span className={`truncate text-[13px] ${!m.seen ? 'font-semibold text-ink' : 'text-muted'}`}>{namn}</span>
+                        <span className="shrink-0 text-[11px] text-muted">{visaTid(m.sent_at)}</span>
+                      </span>
+                      <span className={`mt-0.5 flex items-center gap-1.5 truncate text-[13px] ${!m.seen ? 'font-medium text-ink' : 'text-muted'}`}>
+                        {m.flagged && <span className="shrink-0 text-[11px]">⭐</span>}
+                        {m.reply_later && <span className="shrink-0 text-[11px]">↩️</span>}
+                        <span className="truncate">{m.subject || '(inget ämne)'}</span>
+                      </span>
+                      <span className="mt-0.5 block truncate text-[11px] text-muted/70">{m.from_email}</span>
+                    </span>
+                  </button>
+                )
+              })
+            )}
           </div>
-          <p className="border-t border-border px-4 py-2 text-[10px] text-muted">
+          <p className="border-t border-border px-3 py-2 text-[10px] text-muted">
             <kbd className="rounded border border-border bg-surface px-1">J</kbd>/<kbd className="rounded border border-border bg-surface px-1">K</kbd> bläddra ·
-            <kbd className="ml-1 rounded border border-border bg-surface px-1">R</kbd> svara ·
-            <kbd className="ml-1 rounded border border-border bg-surface px-1">E</kbd> arkivera
+            <kbd className="ml-1 rounded border border-border bg-surface px-1">L</kbd> svara senare ·
+            <kbd className="ml-1 rounded border border-border bg-surface px-1">Z</kbd> skjut upp ·
+            <kbd className="ml-1 rounded border border-border bg-surface px-1">S</kbd> stjärna
           </p>
         </div>
 
         {/* Läsruta */}
         <div className="hidden min-w-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card lg:block">
-          <Lasruta mail={vald} />
+          {vald ? (
+            <Lasruta
+              mejl={vald}
+              konto={kontoAv(vald.account_id)}
+              onSvaraSenare={() => svaraSenare(vald)}
+              onSkjutUpp={(h) => skjutUpp(vald, h)}
+              onStjarna={() => uppdatera(vald.id, { flagged: !vald.flagged })}
+              onRouta={async (dest) => {
+                if (!vald.from_email) return
+                await supabase.rpc('hub_route_sender', { p_pattern: vald.from_email, p_destination: dest })
+                laddaMejl(); laddaAntal()
+              }}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <EmptyState emoji="✉️" text="Välj ett mejl" />
+            </div>
+          )}
         </div>
       </div>
     </div>
   )
 }
 
-function MailRad({ mail, vald, onClick }: { mail: DemoMail; vald: boolean; onClick: () => void }) {
-  const konto = KONTON[mail.konto]
+function Lasruta({ mejl, konto, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
+  mejl: Mejl
+  konto?: Konto
+  onSvaraSenare: () => void
+  onSkjutUpp: (timmar: number) => void
+  onStjarna: () => void
+  onRouta: (dest: 'imbox' | 'feed' | 'papertrail') => void
+}) {
+  const [kropp, setKropp] = useState<{ text_body: string | null; html_body: string | null } | null>(null)
+  const [hamtar, setHamtar] = useState(false)
+  const [fel, setFel] = useState<string | null>(null)
+  const [visaHtml, setVisaHtml] = useState(false)
+
+  useEffect(() => {
+    let avbruten = false
+    setKropp(null); setFel(null); setHamtar(true); setVisaHtml(false)
+    ;(async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) return
+        const res = await fetch(`${supabaseUrl}/functions/v1/mail-body`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId: mejl.id }),
+        })
+        const json = await res.json()
+        if (avbruten) return
+        if (json.fel) setFel(json.fel)
+        else { setKropp(json); setVisaHtml(!json.text_body && !!json.html_body) }
+      } catch (e) {
+        if (!avbruten) setFel(String(e))
+      } finally {
+        if (!avbruten) setHamtar(false)
+      }
+    })()
+    return () => { avbruten = true }
+  }, [mejl.id])
+
+  const namn = mejl.from_name || mejl.from_email || '(okänd)'
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex flex-wrap items-center gap-0.5 border-b border-border px-3 py-2">
+        <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
+        <Verktyg ikon="⏳" text="Skjut upp" onClick={() => onSkjutUpp(24)} />
+        <Verktyg ikon={mejl.flagged ? '⭐' : '☆'} text="" onClick={onStjarna} />
+        <span className="ml-auto flex items-center gap-1">
+          <span className="text-[10px] text-muted">Skicka framtida från denna avsändare till:</span>
+          <Verktyg ikon="📥" text="" title="Inkorgen" onClick={() => onRouta('imbox')} />
+          <Verktyg ikon="📰" text="" title="Flödet" onClick={() => onRouta('feed')} />
+          <Verktyg ikon="🧾" text="" title="Kvitton" onClick={() => onRouta('papertrail')} />
+        </span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-6 pt-5">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            {konto && (
+              <span className="rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${konto.color}22`, color: konto.color }}>
+                {konto.label}
+              </span>
+            )}
+            {mejl.bubble_up_at && new Date(mejl.bubble_up_at) > new Date() && (
+              <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[10px] font-medium text-warn">
+                ⏳ Flyter upp {format(parseISO(mejl.bubble_up_at), 'd MMM HH:mm', { locale: sv })}
+              </span>
+            )}
+          </div>
+
+          <h2 className="text-xl font-semibold leading-snug">{mejl.subject || '(inget ämne)'}</h2>
+
+          <div className="mt-4 flex items-center gap-3 border-b border-border pb-4">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: avatarFarg(namn) }}>
+              {initialer(namn)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{namn}</p>
+              <p className="truncate text-xs text-muted">{mejl.from_email}</p>
+            </div>
+            <span className="shrink-0 text-xs text-muted">
+              {mejl.sent_at && format(parseISO(mejl.sent_at), 'd MMM yyyy HH:mm', { locale: sv })}
+            </span>
+          </div>
+        </div>
+
+        <div className="px-6 py-5">
+          {hamtar && <Spinner />}
+          {fel && <p className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">Kunde inte hämta brödtexten: {fel}</p>}
+          {kropp && (
+            <>
+              {kropp.text_body && kropp.html_body && (
+                <button onClick={() => setVisaHtml(!visaHtml)} className="mb-3 text-xs text-accent-soft hover:underline">
+                  {visaHtml ? 'Visa som text' : 'Visa formaterad'}
+                </button>
+              )}
+              {visaHtml && kropp.html_body ? (
+                // Låst iframe: inga skript, inga formulär, ingen navigering
+                <iframe
+                  sandbox=""
+                  srcDoc={`<style>body{font-family:system-ui,sans-serif;color:#e5eaf5;background:transparent;font-size:14px;line-height:1.6}a{color:#818cf8}img{max-width:100%;height:auto}</style>${kropp.html_body}`}
+                  className="h-[55vh] w-full rounded-xl border border-border bg-surface"
+                  title="Mejlinnehåll"
+                />
+              ) : (
+                <pre className="max-w-prose whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-ink/90">
+                  {kropp.text_body || '(ingen textversion)'}
+                </pre>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Verktyg({ ikon, text, onClick, aktiv, title }: { ikon: string; text: string; onClick?: () => void; aktiv?: boolean; title?: string }) {
   return (
     <button
       onClick={onClick}
-      className={`flex w-full gap-3 border-l-2 border-b border-b-border/50 px-3 py-3.5 text-left transition-colors ${
-        vald ? 'border-l-accent bg-accent/10' : 'border-l-transparent hover:bg-card-hover'
-      }`}
-    >
-      {/* Initialring i avsändarens egen färg */}
-      <span className="relative shrink-0">
-        <span
-          className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white"
-          style={{ background: avatarFarg(mail.avsandare) }}
-        >
-          {initialer(mail.avsandare)}
-        </span>
-        {/* Liten prick i kontots färg = vilket konto mejlet kom till */}
-        <span
-          className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card"
-          style={{ background: konto.farg }}
-          title={konto.namn}
-        />
-      </span>
-
-      <span className="min-w-0 flex-1">
-        <span className="flex items-baseline justify-between gap-2">
-          <span className={`truncate text-[13px] ${mail.olast ? 'font-semibold text-ink' : 'text-muted'}`}>
-            {mail.avsandare}
-          </span>
-          <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted">
-            {mail.bilaga && <span aria-label="Bilaga">📎</span>}
-            {mail.tid}
-          </span>
-        </span>
-        <span className={`mt-0.5 flex items-center gap-1.5 truncate text-[13px] ${mail.olast ? 'font-medium text-ink' : 'text-muted'}`}>
-          {mail.stjarna && <span className="shrink-0 text-[11px]">⭐</span>}
-          <span className="truncate">{mail.amne}</span>
-          {mail.itrad && <span className="shrink-0 rounded-full border border-border px-1.5 text-[10px] text-muted">{mail.itrad}</span>}
-        </span>
-        <span className="mt-1 line-clamp-2 text-[12px] leading-snug text-muted/75">{mail.utdrag}</span>
-        {mail.taggar && (
-          <span className="mt-1.5 flex flex-wrap gap-1">
-            {mail.taggar.map((t) => (
-              <span
-                key={t}
-                className="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                style={{ background: `${TAGGAR[t]}22`, color: TAGGAR[t] }}
-              >
-                {t}
-              </span>
-            ))}
-          </span>
-        )}
-        {mail.olast && <span className="mt-1.5 block h-1 w-1 rounded-full" />}
-      </span>
-    </button>
-  )
-}
-
-function Lasruta({ mail }: { mail: DemoMail }) {
-  const konto = KONTON[mail.konto]
-  return (
-    <div className="flex h-full flex-col">
-      {/* Verktygsrad: svara till vänster, hantering till höger */}
-      <div className="flex items-center gap-0.5 border-b border-border px-3 py-2">
-        <Verktyg ikon="↩" text="Svara" primar />
-        <Verktyg ikon="↩↩" text="Svara alla" />
-        <Verktyg ikon="↪" text="Vidarebefordra" />
-        <span className="ml-auto" />
-        <Verktyg ikon="📦" text="Arkivera" />
-        <Verktyg ikon="🗑" text="" />
-        <Verktyg ikon={mail.stjarna ? '⭐' : '☆'} text="" />
-        <Verktyg ikon="⋯" text="" />
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-6 py-5">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <span className="rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${konto.farg}22`, color: konto.farg }}>
-            {konto.namn}
-          </span>
-          {mail.taggar?.map((t) => (
-            <span key={t} className="rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${TAGGAR[t]}22`, color: TAGGAR[t] }}>
-              {t}
-            </span>
-          ))}
-          {mail.itrad && <span className="text-[11px] text-muted">{mail.itrad} meddelanden i tråden</span>}
-        </div>
-
-        <h2 className="text-xl font-semibold leading-snug">{mail.amne}</h2>
-
-        <div className="mt-4 flex items-center gap-3 border-b border-border pb-4">
-          <span
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-            style={{ background: avatarFarg(mail.avsandare) }}
-          >
-            {initialer(mail.avsandare)}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{mail.avsandare}</p>
-            <p className="truncate text-xs text-muted">{mail.adress} · till mig</p>
-          </div>
-          <span className="shrink-0 text-xs text-muted">{mail.tid}</span>
-        </div>
-
-        {mail.bilaga && (
-          <div className="mt-4 inline-flex items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2.5">
-            <span className="text-lg" aria-hidden>📄</span>
-            <span className="text-sm">{mail.bilaga}</span>
-            <span className="cursor-pointer text-xs text-accent-soft hover:underline">Ladda ner</span>
-          </div>
-        )}
-
-        <div className="mt-5 max-w-prose space-y-3.5 text-[14px] leading-relaxed text-ink/90">
-          {mail.brodtext.map((stycke, i) => (
-            <p key={i} className="whitespace-pre-line">{stycke}</p>
-          ))}
-        </div>
-      </div>
-
-      {/* Snabbsvar med avatar */}
-      <div className="border-t border-border p-3">
-        <div className="flex items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2.5">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-[10px] font-bold text-white">PL</span>
-          <span className="text-sm text-muted">Svara {mail.avsandare.split(' ')[0]}…</span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Verktyg({ ikon, text, primar }: { ikon: string; text: string; primar?: boolean }) {
-  return (
-    <button
+      title={title}
       className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-        primar ? 'text-accent-soft hover:bg-accent/15' : 'text-muted hover:bg-card-hover hover:text-ink'
+        aktiv ? 'bg-accent/15 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
       }`}
     >
       <span aria-hidden>{ikon}</span>
