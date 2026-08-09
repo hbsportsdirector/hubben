@@ -31,6 +31,10 @@ interface Mejl {
   destination: string
   has_attachments: boolean
   rfc_message_id: string | null
+  /** Mappen mejlet visas i — köad flytt medräknad */
+  visad_mapp_id: string
+  /** Flytten ligger i kön men mejlservern vet inte om den än */
+  vantar: boolean
 }
 
 interface Konto { id: string; label: string; color: string; email: string; signature: string }
@@ -80,6 +84,9 @@ export default function Mail() {
   const [lada, setLada] = useState<Lada>('imbox')
   const [kontoFilter, setKontoFilter] = useState<string>('alla')
   const [mappFilter, setMappFilter] = useState<string | null>(null)
+  // Bumpas när något utanför filtren har ändrat datan och listan måste läsas
+  // om — utan att någon gammal closure får bestämma vilka filter som gäller.
+  const [dataVersion, setDataVersion] = useState(0)
   const [sok, setSok] = useState('')
   const [mejl, setMejl] = useState<Mejl[]>([])
   const [konton, setKonton] = useState<Konto[]>([])
@@ -94,7 +101,6 @@ export default function Mail() {
   const [sistKlickad, setSistKlickad] = useState<number | null>(null)
   const [visaBulkFlytt, setVisaBulkFlytt] = useState(false)
   const [bulkSok, setBulkSok] = useState('')
-  const [bulkArbetar, setBulkArbetar] = useState<string | null>(null)
   const [visaNytt, setVisaNytt] = useState(false)
   const [misslyckades, setMisslyckades] = useState<string | null>(null)
   const [enkelFlytt, setEnkelFlytt] = useState<Mejl | null>(null)
@@ -102,6 +108,8 @@ export default function Mail() {
   const [senastSynk, setSenastSynk] = useState<string | null>(null)
   const [nyaSenast, setNyaSenast] = useState<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  // Bara en avbetning i taget — annars slåss två omgångar om samma köposter
+  const koarbetar = useRef(false)
 
   async function anropaFunktion(namn: string, kropp: Record<string, unknown>) {
     const { data: { session } } = await supabase.auth.getSession()
@@ -140,17 +148,16 @@ export default function Mail() {
 
   const laddaAntal = useCallback(async () => {
     const nu = new Date().toISOString()
-    // Samma regel som listan: bara det som ligger i en inkorgsmapp räknas,
-    // annars fortsätter papperskorgen att synas i siffran bredvid lådan.
+    // Samma vy som listan — en definition av var ett mejl hör hemma
     const olast = (lada: string) =>
-      supabase.from('hub_messages').select('*, hub_folders!inner(role)', { count: 'exact', head: true })
-        .eq('destination', lada).eq('seen', false).eq('hub_folders.role', 'inbox')
+      supabase.from('hub_mejl').select('*', { count: 'exact', head: true })
+        .eq('destination', lada).eq('seen', false).eq('visad_roll', 'inbox')
     const [imbox, feed, kvitto, senare, uppskjutna] = await Promise.all([
       olast('imbox').eq('reply_later', false),
       olast('feed'),
       olast('papertrail'),
-      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).eq('reply_later', true),
-      supabase.from('hub_messages').select('*', { count: 'exact', head: true }).gt('bubble_up_at', nu),
+      supabase.from('hub_mejl').select('*', { count: 'exact', head: true }).eq('reply_later', true),
+      supabase.from('hub_mejl').select('*', { count: 'exact', head: true }).gt('bubble_up_at', nu),
     ])
     setAntal({
       imbox: imbox.count ?? 0, feed: feed.count ?? 0, papertrail: kvitto.count ?? 0,
@@ -160,34 +167,32 @@ export default function Mail() {
 
   const laddaMejl = useCallback(async () => {
     const nu = new Date().toISOString()
-    // Kopplingen till mappen görs i databasen, inte mot mapplistan i minnet.
-    // Tidigare hoppades mappfiltret över när mapplistan ännu var tom, och då
-    // låg papperskorgen kvar i inkorgen tills nästa omladdning.
-    let q = supabase.from('hub_messages')
-      .select('id, account_id, folder_id, subject, from_name, from_email, sent_at, seen, flagged, reply_later, bubble_up_at, destination, has_attachments, rfc_message_id, hub_folders!inner(role)')
+    // hub_mejl vet vilken mapp ett mejl visas i — även när flytten ligger kvar
+    // i kön. Klienten sätter inte ihop det filtret själv längre.
+    let q = supabase.from('hub_mejl')
+      .select('id, account_id, folder_id, visad_mapp_id, subject, from_name, from_email, sent_at, seen, flagged, reply_later, bubble_up_at, destination, has_attachments, rfc_message_id, vantar')
       .order('sent_at', { ascending: false })
       .limit(200)
 
-    if (lada === 'reply_later') q = q.eq('reply_later', true)
+    if (mappFilter) {
+      // En vald mapp är ett eget urval. Lades lådans filter ovanpå blev
+      // papperskorgen alltid tom, eftersom lådorna bara visar inkorgsmappar.
+      q = q.eq('visad_mapp_id', mappFilter)
+    } else if (lada === 'reply_later') q = q.eq('reply_later', true)
     else if (lada === 'bubble_up') q = q.gt('bubble_up_at', nu)
     else {
-      // Lådorna visar bara post som ligger i en inkorgsmapp. Flyttas ett mejl
-      // till papperskorgen eller en egen mapp ska det lämna lådan.
       q = q.eq('destination', lada).eq('reply_later', false)
-        .eq('hub_folders.role', 'inbox')
+        .eq('visad_roll', 'inbox')
         .or(`bubble_up_at.is.null,bubble_up_at.lte.${nu}`)
     }
     if (kontoFilter !== 'alla') q = q.eq('account_id', kontoFilter)
-    if (mappFilter) q = q.eq('folder_id', mappFilter)
     if (sok.trim()) q = q.or(`subject.ilike.%${sok.trim()}%,from_name.ilike.%${sok.trim()}%,from_email.ilike.%${sok.trim()}%`)
 
     const { data } = await q
-    // Den hopkopplade mappen behövs bara för filtret — listan vill inte ha den
-    const rader = (data ?? []).map(({ hub_folders: _mapp, ...m }) => m as Mejl)
     // Listan byts ut på plats — ingen spinner, inget hopp
-    setMejl(rader)
+    setMejl((data ?? []) as Mejl[])
     setLaddar(false)
-  }, [lada, kontoFilter, mappFilter, sok])
+  }, [lada, kontoFilter, mappFilter, sok, dataVersion])
 
   useEffect(() => { laddaMeta() }, [laddaMeta])
   useEffect(() => { laddaMejl(); laddaAntal() }, [laddaMejl, laddaAntal])
@@ -197,6 +202,9 @@ export default function Mail() {
     setSynkar(true)
     if (!tyst) setNyaSenast(null)
     try {
+      // Skicka upp våra egna flyttar innan vi hämtar hem något — annars kan
+      // synken hinna visa mejlet i den gamla mappen igen.
+      await betaAvKon()
       const res = await anropaFunktion('mail-sync', {})
       const nya = (res?.resultat ?? []).reduce((s: number, r: { nya?: number }) => s + (r.nya ?? 0), 0)
       setNyaSenast(nya)
@@ -264,7 +272,7 @@ export default function Mail() {
       if (!vald) return
       if (e.key === 'l') { e.preventDefault(); svaraSenare(vald) }
       if (e.key === 'z') { e.preventDefault(); skjutUpp(vald, 24) }
-      if (e.key === '#' || e.key === 'Delete') { e.preventDefault(); flyttaOptimistiskt(vald, null, 'trash') }
+      if (e.key === '#' || e.key === 'Delete') { e.preventDefault(); flytta([vald.id], undefined, 'trash') }
       if (e.key === 'u') { e.preventDefault(); uppdatera(vald.id, { seen: !vald.seen }) }
       if (e.key === 's') { e.preventDefault(); uppdatera(vald.id, { flagged: !vald.flagged }) }
     }
@@ -293,79 +301,57 @@ export default function Mail() {
     setSistKlickad(index)
   }
 
-  /** Optimistisk flytt: mejlet försvinner direkt, servern jobbar i bakgrunden.
-   *  Går det fel kommer raden tillbaka och du får veta. */
-  async function flyttaOptimistiskt(m: Mejl, mappId: string | null, roll?: string) {
-    const mal = mappId ? mappar.find((f) => f.id === mappId) : null
-    const mellanKonton = !!mal && mal.account_id !== m.account_id
-    const foreDetta = mejl
-    const index = mejl.findIndex((x) => x.id === m.id)
-
-    setMejl((prev) => prev.filter((x) => x.id !== m.id))
-    if (valdId === m.id) setValdId(mejl[index + 1]?.id ?? mejl[index - 1]?.id ?? null)
-    setValda((prev) => { const n = new Set(prev); n.delete(m.id); return n })
-
-    const res = await anropaFunktion(
-      mellanKonton ? 'mail-move-x' : 'mail-move',
-      mappId ? { messageId: m.id, targetFolderId: mappId } : { messageId: m.id, targetRole: roll },
-    )
-    if (res?.fel) {
-      setMejl(foreDetta)
-      setMisslyckades(res.fel as string)
-      setTimeout(() => setMisslyckades(null), 10000)
-    } else if (res?.redanDar) {
-      // Inget flyttades — visa sanningen i stället för att låtsas
-      setMejl(foreDetta)
-      setMisslyckades('Mejlet ligger redan i den mappen.')
-      setTimeout(() => setMisslyckades(null), 6000)
-    } else {
-      laddaAntal()
+  /** Flytten ÄR databasskrivningen. Ett mejl, hundra mejl, samma väg — och
+   *  samma väg oavsett om det korsar konton eller inte.
+   *
+   *  Mejlservern får veta av kön efteråt. Därför finns här inget att ångra,
+   *  ingen sparad lista att lägga tillbaka och ingen väntan på IMAP. */
+  async function flytta(ids: string[], mappId?: string, roll?: string) {
+    if (!ids.length) return
+    const { data, error } = await supabase.rpc('hub_flytta', {
+      p_msg_ids: ids,
+      p_mal_mapp: mappId ?? null,
+      p_mal_roll: roll ?? null,
+    })
+    if (error) {
+      setMisslyckades(error.message)
+      setTimeout(() => setMisslyckades(null), 8000)
+      return
     }
+
+    if (valdId && ids.includes(valdId)) {
+      const i = mejl.findIndex((x) => x.id === valdId)
+      setValdId(mejl.slice(i + 1).find((x) => !ids.includes(x.id))?.id ?? null)
+    }
+    setValda(new Set())
+    await laddaMejl()
+    await laddaAntal()
+
+    const hoppade = (data as { hoppade?: number } | null)?.hoppade ?? 0
+    if (hoppade) {
+      setMisslyckades(hoppade === ids.length ? 'Låg redan där.' : `${hoppade} låg redan där.`)
+      setTimeout(() => setMisslyckades(null), 5000)
+    }
+    betaAvKon()
   }
 
-  async function bulkFlytta(mappId: string) {
-    const mal = mappar.find((m) => m.id === mappId)
-    if (!mal) return
-    setVisaBulkFlytt(false)
-    setBulkArbetar('Flyttar…')
+  /** Skickar kön vidare till mejlservern. Går det fel står mejlen kvar där
+   *  du lade dem, med en markering — kön försöker igen av sig själv. */
+  async function betaAvKon() {
+    if (koarbetar.current) return
+    koarbetar.current = true
     try {
-      const ids = [...valda]
-      // Mejlen försvinner direkt ur listan — servern jobbar ikapp
-      setMejl((prev) => prev.filter((m) => !valda.has(m.id)))
-      const res = await anropaFunktion('mail-move-bulk', { messageIds: ids, targetFolderId: mappId })
-
-      const problem: string[] = res?.problem ?? []
-      let flyttade: number = res?.flyttade ?? 0
-
-      // Mejl på andra konton måste gå den långsamma vägen, ett i taget
-      const kvar: string[] = res?.kraverKontobyte ?? []
-      for (let i = 0; i < kvar.length; i++) {
-        setBulkArbetar(`Flyttar mellan konton (${i + 1}/${kvar.length})…`)
-        const r = await anropaFunktion('mail-move-x', { messageId: kvar[i], targetFolderId: mappId })
-        if (r?.fel) problem.push(String(r.fel))
-        else flyttade++
+      for (let omgang = 0; omgang < 10; omgang++) {
+        const r = await anropaFunktion('mail-drain', {})
+        await laddaMejl()
+        if (r?.problem?.length) {
+          setMisslyckades(r.problem.map((p: { fel: string }) => p.fel).join(' · '))
+          setTimeout(() => setMisslyckades(null), 12000)
+        }
+        if (r?.fel || r?.klart) return
       }
-
-      setValda(new Set())
-      setValdId(null)
-
-      // Servern är sanningen — läs om i stället för att lita på optimismen.
-      // Mapplistan rörs inte här; den ändras inte av en flytt.
-      await laddaMejl()
-      await laddaAntal()
-
-      if (res?.fel) {
-        setMisslyckades(String(res.fel))
-      } else if (problem.length) {
-        setMisslyckades(`${flyttade} av ${ids.length} flyttades. ${problem.join(' · ')}`)
-      } else if (flyttade < ids.length) {
-        setMisslyckades(`Bara ${flyttade} av ${ids.length} flyttades — resten ligger kvar.`)
-      }
-      if (res?.fel || problem.length || flyttade < ids.length) {
-        setTimeout(() => setMisslyckades(null), 10000)
-      }
-    } finally {
-      setBulkArbetar(null)
+    } catch { /* nästa gång */ } finally {
+      koarbetar.current = false
     }
   }
 
@@ -478,7 +464,12 @@ export default function Mail() {
                         setSynkarMapp(m.id)
                         await anropaFunktion('mail-sync', { folderId: m.id })
                         await laddaMeta()
-                        await laddaMejl()
+                        // Inte laddaMejl() här: den funktionen kommer från
+                        // renderingen där klicket skedde och har fortfarande
+                        // det FÖRRA mappvalet, så den skulle skriva över
+                        // listan med fel mapps innehåll. Räknaren får effekten
+                        // att köra om frågan med aktuellt val i stället.
+                        setDataVersion((v) => v + 1)
                         setSynkarMapp(null)
                       }
                     }}
@@ -510,29 +501,25 @@ export default function Mail() {
               <span className="px-1 text-xs font-semibold text-accent-soft">{valda.size} markerade</span>
               <button
                 onClick={() => { setVisaBulkFlytt(!visaBulkFlytt); setBulkSok('') }}
-                disabled={!!bulkArbetar}
-                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink disabled:opacity-50"
+                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink"
               >
                 📁 Flytta
               </button>
               <button
                 onClick={() => bulkUppdatera({ reply_later: true, reply_later_at: new Date().toISOString() } as Partial<Mejl>)}
-                disabled={!!bulkArbetar}
-                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink disabled:opacity-50"
+                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink"
               >
                 ↩️ Svara senare
               </button>
               <button
                 onClick={() => bulkUppdatera({ seen: true })}
-                disabled={!!bulkArbetar}
-                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink disabled:opacity-50"
+                className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink"
               >
                 Markera läst
               </button>
               <button onClick={() => setValda(new Set())} className="ml-auto rounded-lg px-2 py-1 text-xs text-muted hover:text-ink">
                 Avmarkera
               </button>
-              {bulkArbetar && <span className="w-full px-1 text-[11px] text-accent-soft">{bulkArbetar}</span>}
 
               {/* Dialogen ligger utanför listan — se FlyttaDialog nedan */}
             </div>
@@ -585,7 +572,10 @@ export default function Mail() {
                         {m.flagged && <span className="shrink-0 text-[11px]">⭐</span>}
                         {m.reply_later && <span className="shrink-0 text-[11px]">↩️</span>}
                         <span className="truncate">{m.subject || '(inget ämne)'}</span>
-                        {m.has_attachments && <span className="ml-auto shrink-0 text-[11px] text-muted" title="Har bilagor">📎</span>}
+                        {m.vantar && (
+                          <span className="ml-auto shrink-0 text-[11px] text-warn" title="Flyttad — väntar på mejlservern">⏱</span>
+                        )}
+                        {m.has_attachments && <span className={`shrink-0 text-[11px] text-muted ${m.vantar ? '' : 'ml-auto'}`} title="Har bilagor">📎</span>}
                       </span>
                       <span className="mt-0.5 block truncate text-[11px] text-muted/70">{m.from_email}</span>
                     </span>
@@ -614,8 +604,8 @@ export default function Mail() {
               visaFlytt={visaFlytt}
               setVisaFlytt={(v) => { setVisaFlytt(false); if (v) setEnkelFlytt(vald) }}
               flyttar={flyttar}
-              onFlytta={(mappId) => { setVisaFlytt(false); flyttaOptimistiskt(vald, mappId) }}
-              onRadera={() => flyttaOptimistiskt(vald, null, 'trash')}
+              onFlytta={(mappId) => { setVisaFlytt(false); flytta([vald.id], mappId) }}
+              onRadera={() => flytta([vald.id], undefined, 'trash')}
               onSkicka={async (fromAccountId, till, amne, text) => {
                 const svar = await anropaFunktion('mail-send', {
                   fromAccountId, to: till, subject: amne, body: text, inReplyToId: vald.id,
@@ -649,29 +639,31 @@ export default function Mail() {
         konton={konton}
         msgIds={[...valda]}
         franKonto={mejl.find((m) => valda.has(m.id))?.account_id}
-        onValj={(mappId) => bulkFlytta(mappId)}
+        onValj={(mappId) => { setVisaBulkFlytt(false); flytta([...valda], mappId) }}
       />
 
       <FlyttaDialog
         open={!!enkelFlytt}
         onClose={() => setEnkelFlytt(null)}
         antal={1}
-        mappar={mappar.filter((m) => m.id !== enkelFlytt?.folder_id)}
+        mappar={mappar.filter((m) => m.id !== enkelFlytt?.visad_mapp_id)}
         konton={konton}
         msgIds={enkelFlytt ? [enkelFlytt.id] : []}
         franKonto={enkelFlytt?.account_id}
         onValj={(mappId) => {
           const m = enkelFlytt
           setEnkelFlytt(null)
-          if (m) flyttaOptimistiskt(m, mappId)
+          if (m) flytta([m.id], mappId)
         }}
       />
 
       {misslyckades && (
         <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl border border-bad/40 bg-card px-4 py-3 shadow-2xl">
-          <p className="text-sm font-medium text-bad">Flytten misslyckades</p>
+          <p className="text-sm font-medium text-bad">Mejlservern krånglade</p>
           <p className="mt-1 text-xs text-muted">{misslyckades}</p>
-          <p className="mt-1 text-xs text-muted">Mejlet ligger kvar där det var.</p>
+          <p className="mt-1 text-xs text-muted">
+            Mejlet ligger kvar där du lade det och kön försöker igen av sig själv.
+          </p>
         </div>
       )}
 
