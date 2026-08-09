@@ -52,6 +52,20 @@ function avatarFarg(n: string) {
 function initialer(n: string) {
   return n.split(/[\s@.]+/).filter(Boolean).map((d) => d[0]).slice(0, 2).join('').toUpperCase()
 }
+/** Rensar bort Outlook-villkorskommentarer och vinkelparenteser runt länkar
+ *  som ofta ligger kvar i autogenererade textversioner. */
+function stada(text: string | null): string {
+  if (!text) return ''
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/<!--\[if[^\]]*\]>(<!-->)?/gi, '')
+    .replace(/<!\[endif\]-->/gi, '')
+    .replace(/<(https?:\/\/[^>\s]+)>/g, '$1')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function visaTid(iso: string | null) {
   if (!iso) return ''
   const d = parseISO(iso)
@@ -497,7 +511,9 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
         const json = await res.json()
         if (avbruten) return
         if (json.fel) setFel(json.fel)
-        else { setKropp(json); setVisaHtml(!json.text_body && !!json.html_body) }
+        // Formaterad version är förstahandsval, precis som i andra klienter —
+        // textversionen är ofta autogenererad och full av skräp.
+        else { setKropp(json); setVisaHtml(!!json.html_body) }
       } catch (e) {
         if (!avbruten) setFel(String(e))
       } finally {
@@ -564,8 +580,9 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="px-6 pt-5">
+      {/* Rubrikblocket står still — bara innehållet scrollar */}
+      <div className="shrink-0 border-b border-border">
+        <div className="px-6 pt-4 pb-3">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             {konto && (
               <span className="rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${konto.color}22`, color: konto.color }}>
@@ -581,7 +598,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
 
           <h2 className="text-xl font-semibold leading-snug">{mejl.subject || '(inget ämne)'}</h2>
 
-          <div className="mt-4 flex items-center gap-3 border-b border-border pb-4">
+          <div className="mt-3 flex items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: avatarFarg(namn) }}>
               {initialer(namn)}
             </span>
@@ -594,7 +611,9 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
             </span>
           </div>
         </div>
+      </div>
 
+      <div className="flex-1 overflow-y-auto">
         <div className="px-6 py-5">
           {hamtar && <Spinner />}
           {fel && <p className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">Kunde inte hämta brödtexten: {fel}</p>}
@@ -617,7 +636,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
                 />
               ) : (
                 <pre className="max-w-prose whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-ink/90">
-                  {kropp.text_body || '(ingen textversion)'}
+                  {stada(kropp.text_body) || '(ingen textversion)'}
                 </pre>
               )}
             </>
