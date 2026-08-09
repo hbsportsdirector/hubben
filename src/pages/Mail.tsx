@@ -360,6 +360,14 @@ export default function Mail() {
                   setFlyttar(false)
                 }
               }}
+              onSkicka={async (fromAccountId, till, amne, text) => {
+                const svar = await anropaFunktion('mail-send', {
+                  fromAccountId, to: till, subject: amne, body: text, inReplyToId: vald.id,
+                })
+                if (svar?.fel) return { fel: svar.fel as string }
+                uppdatera(vald.id, { reply_later: false } as Partial<Mejl>)
+                return { ok: true }
+              }}
               onSvaraSenare={() => svaraSenare(vald)}
               onSkjutUpp={(h) => skjutUpp(vald, h)}
               onStjarna={() => uppdatera(vald.id, { flagged: !vald.flagged })}
@@ -380,7 +388,7 @@ export default function Mail() {
   )
 }
 
-function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
+function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onSkicka, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
   mejl: Mejl
   konto?: Konto
   mappar: Mapp[]
@@ -389,6 +397,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   setVisaFlytt: (v: boolean) => void
   flyttar: boolean
   onFlytta: (mappId: string) => void
+  onSkicka: (fromAccountId: string, till: string, amne: string, text: string) => Promise<{ ok?: boolean; fel?: string }>
   onSvaraSenare: () => void
   onSkjutUpp: (timmar: number) => void
   onStjarna: () => void
@@ -396,6 +405,23 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
 }) {
   const [flyttSok, setFlyttSok] = useState('')
   const traffar = mappar.filter((m) => m.path.toLowerCase().includes(flyttSok.toLowerCase())).slice(0, 40)
+
+  // Svarsruta — avsändaren förvald till kontot mejlet kom till
+  const [visaSvar, setVisaSvar] = useState(false)
+  const [franKonto, setFranKonto] = useState(mejl.account_id)
+  const [till, setTill] = useState('')
+  const [amne, setAmne] = useState('')
+  const [text, setText] = useState('')
+  const [skickar, setSkickar] = useState(false)
+  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string } | null>(null)
+
+  useEffect(() => {
+    setVisaSvar(false); setResultat(null)
+    setFranKonto(mejl.account_id)
+    setTill(mejl.from_email ?? '')
+    setAmne(/^re:/i.test(mejl.subject) ? mejl.subject : `Re: ${mejl.subject}`)
+    setText('')
+  }, [mejl.id, mejl.account_id, mejl.from_email, mejl.subject])
   const [kropp, setKropp] = useState<{ text_body: string | null; html_body: string | null } | null>(null)
   const [hamtar, setHamtar] = useState(false)
   const [fel, setFel] = useState<string | null>(null)
@@ -431,6 +457,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   return (
     <div className="flex h-full flex-col">
       <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-3 py-2">
+        <Verktyg ikon="✏️" text="Svara" aktiv={visaSvar} onClick={() => setVisaSvar(!visaSvar)} />
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
         <Verktyg ikon="⏳" text="Skjut upp" onClick={() => onSkjutUpp(24)} />
         <Verktyg ikon="📁" text={flyttar ? 'Flyttar…' : 'Flytta till…'} aktiv={visaFlytt} onClick={() => { if (!flyttar) { setVisaFlytt(!visaFlytt); setFlyttSok('') } }} />
@@ -539,6 +566,85 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
             </>
           )}
         </div>
+      </div>
+
+      {/* Svarsruta */}
+      <div className="border-t border-border p-3">
+        {!visaSvar ? (
+          <button
+            onClick={() => setVisaSvar(true)}
+            className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2.5 text-left transition-colors hover:bg-card-hover"
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ background: konto?.color ?? '#6366f1' }}>
+              {initialer(konto?.email ?? 'du')}
+            </span>
+            <span className="text-sm text-muted">Svara {(mejl.from_name || mejl.from_email || '').split(' ')[0]}…</span>
+          </button>
+        ) : (
+          <div className="space-y-2 rounded-xl border border-border bg-surface p-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted">Från</span>
+              <select
+                value={franKonto}
+                onChange={(e) => setFranKonto(e.target.value)}
+                className="rounded-lg border border-border bg-card px-2 py-1 text-xs text-ink outline-none focus:border-accent"
+              >
+                {konton.map((k) => (
+                  <option key={k.id} value={k.id}>{k.email}</option>
+                ))}
+              </select>
+              {franKonto !== mejl.account_id && (
+                <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[10px] font-medium text-warn">
+                  Skickas via ett annat konto än mejlet kom till
+                </span>
+              )}
+            </div>
+
+            <input
+              value={till}
+              onChange={(e) => setTill(e.target.value)}
+              placeholder="Till"
+              className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+            />
+            <input
+              value={amne}
+              onChange={(e) => setAmne(e.target.value)}
+              placeholder="Ämne"
+              className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+            />
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Skriv ditt svar…"
+              autoFocus
+              className="min-h-32 w-full rounded-lg border border-border bg-card px-2.5 py-2 text-sm text-ink outline-none focus:border-accent"
+            />
+
+            {resultat?.fel && (
+              <p className="rounded-lg border border-bad/40 bg-bad/10 px-2.5 py-1.5 text-xs text-bad">{resultat.fel}</p>
+            )}
+            {resultat?.ok && (
+              <p className="rounded-lg border border-good/40 bg-good/10 px-2.5 py-1.5 text-xs text-good">✓ Skickat</p>
+            )}
+
+            <div className="flex items-center justify-between">
+              <button onClick={() => setVisaSvar(false)} className="text-xs text-muted hover:text-ink">Avbryt</button>
+              <button
+                disabled={skickar || !till.trim() || !text.trim()}
+                onClick={async () => {
+                  setSkickar(true); setResultat(null)
+                  const r = await onSkicka(franKonto, till.trim(), amne, text)
+                  setResultat(r)
+                  if (r.ok) { setText(''); setTimeout(() => setVisaSvar(false), 1200) }
+                  setSkickar(false)
+                }}
+                className="rounded-xl bg-accent px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
+              >
+                {skickar ? 'Skickar…' : 'Skicka'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
