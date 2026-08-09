@@ -25,6 +25,9 @@ interface Testsvar {
   msTotalt?: number
   skrivfel?: string
   uidvalidityBytt?: boolean
+  // Från mail-folders
+  antal?: number
+  mappar?: string[]
   // Gemensamt
   fel?: string
 }
@@ -142,7 +145,7 @@ export default function Settings() {
             {test.map((r, i) => {
               const namn = r.label ?? r.konto ?? 'Konto'
               const problem = r.fel ?? r.skrivfel ?? r.serversvar
-              const lyckat = !problem && (r.inloggad === true || r.nya !== undefined)
+              const lyckat = !problem && (r.inloggad === true || r.nya !== undefined || r.antal !== undefined)
               return (
                 <li
                   key={`${namn}-${i}`}
@@ -164,6 +167,17 @@ export default function Settings() {
                       {r.msTotalt && ` · ${(r.msTotalt / 1000).toFixed(1)} s`}
                       {r.uidvalidityBytt && ' · brevlådan hade nollställts, hämtade om'}
                     </p>
+                  )}
+
+                  {r.antal !== undefined && !problem && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-xs text-muted">
+                        <strong className="text-ink">{r.antal}</strong> mappar inlästa — visa
+                      </summary>
+                      <ul className="mt-2 max-h-48 space-y-0.5 overflow-y-auto text-[11px] text-muted">
+                        {(r.mappar ?? []).map((m) => <li key={m} className="truncate">{m}</li>)}
+                      </ul>
+                    </details>
                   )}
 
                   {r.inloggad && (
