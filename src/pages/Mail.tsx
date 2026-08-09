@@ -94,6 +94,7 @@ export default function Mail() {
   const [bulkSok, setBulkSok] = useState('')
   const [bulkArbetar, setBulkArbetar] = useState<string | null>(null)
   const [visaNytt, setVisaNytt] = useState(false)
+  const [misslyckades, setMisslyckades] = useState<string | null>(null)
   const [synkar, setSynkar] = useState(false)
   const [senastSynk, setSenastSynk] = useState<string | null>(null)
   const [nyaSenast, setNyaSenast] = useState<number | null>(null)
@@ -171,6 +172,8 @@ export default function Mail() {
       await laddaMejl()
       await laddaAntal()
       await laddaMeta()
+      // Hämta brödtexter i bakgrunden så att öppna mejl blir en databasläsning
+      anropaFunktion('mail-prefetch', {}).catch(() => {})
     } finally {
       setSynkar(false)
     }
@@ -227,6 +230,7 @@ export default function Mail() {
       if (!vald) return
       if (e.key === 'l') { e.preventDefault(); svaraSenare(vald) }
       if (e.key === 'z') { e.preventDefault(); skjutUpp(vald, 24) }
+      if (e.key === '#' || e.key === 'Delete') { e.preventDefault(); flyttaOptimistiskt(vald, null, 'trash') }
       if (e.key === 'u') { e.preventDefault(); uppdatera(vald.id, { seen: !vald.seen }) }
       if (e.key === 's') { e.preventDefault(); uppdatera(vald.id, { flagged: !vald.flagged }) }
     }
@@ -255,6 +259,31 @@ export default function Mail() {
     setSistKlickad(index)
   }
 
+  /** Optimistisk flytt: mejlet försvinner direkt, servern jobbar i bakgrunden.
+   *  Går det fel kommer raden tillbaka och du får veta. */
+  async function flyttaOptimistiskt(m: Mejl, mappId: string | null, roll?: string) {
+    const mal = mappId ? mappar.find((f) => f.id === mappId) : null
+    const mellanKonton = !!mal && mal.account_id !== m.account_id
+    const foreDetta = mejl
+    const index = mejl.findIndex((x) => x.id === m.id)
+
+    setMejl((prev) => prev.filter((x) => x.id !== m.id))
+    if (valdId === m.id) setValdId(mejl[index + 1]?.id ?? mejl[index - 1]?.id ?? null)
+    setValda((prev) => { const n = new Set(prev); n.delete(m.id); return n })
+
+    const res = await anropaFunktion(
+      mellanKonton ? 'mail-move-x' : 'mail-move',
+      mappId ? { messageId: m.id, targetFolderId: mappId } : { messageId: m.id, targetRole: roll },
+    )
+    if (res?.fel) {
+      setMejl(foreDetta)
+      setMisslyckades(res.fel as string)
+      setTimeout(() => setMisslyckades(null), 6000)
+    } else {
+      laddaAntal()
+    }
+  }
+
   async function bulkFlytta(mappId: string) {
     const mal = mappar.find((m) => m.id === mappId)
     if (!mal) return
@@ -262,6 +291,8 @@ export default function Mail() {
     setBulkArbetar('Flyttar…')
     try {
       const ids = [...valda]
+      // Mejlen försvinner direkt ur listan — servern jobbar ikapp
+      setMejl((prev) => prev.filter((m) => !valda.has(m.id)))
       const res = await anropaFunktion('mail-move-bulk', { messageIds: ids, targetFolderId: mappId })
       // Mejl på andra konton måste gå den långsamma vägen, ett i taget
       const kvar: string[] = res?.kraverKontobyte ?? []
@@ -555,26 +586,8 @@ export default function Mail() {
               visaFlytt={visaFlytt}
               setVisaFlytt={setVisaFlytt}
               flyttar={flyttar}
-              onFlytta={async (mappId) => {
-                const mal = mappar.find((m) => m.id === mappId)
-                if (!mal) return
-                const mellanKonton = mal.account_id !== vald.account_id
-                setVisaFlytt(false)
-                setFlyttar(true)
-                try {
-                  const svar = await anropaFunktion(
-                    mellanKonton ? 'mail-move-x' : 'mail-move',
-                    { messageId: vald.id, targetFolderId: mappId },
-                  )
-                  if (svar?.fel) { alert('Kunde inte flytta: ' + svar.fel); return }
-                  setMejl((prev) => prev.filter((x) => x.id !== vald.id))
-                  setValdId(null)
-                  laddaMeta()
-                  laddaAntal()
-                } finally {
-                  setFlyttar(false)
-                }
-              }}
+              onFlytta={(mappId) => { setVisaFlytt(false); flyttaOptimistiskt(vald, mappId) }}
+              onRadera={() => flyttaOptimistiskt(vald, null, 'trash')}
               onSkicka={async (fromAccountId, till, amne, text) => {
                 const svar = await anropaFunktion('mail-send', {
                   fromAccountId, to: till, subject: amne, body: text, inReplyToId: vald.id,
@@ -599,6 +612,14 @@ export default function Mail() {
           )}
         </div>
       </div>
+
+      {misslyckades && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl border border-bad/40 bg-card px-4 py-3 shadow-2xl">
+          <p className="text-sm font-medium text-bad">Flytten misslyckades</p>
+          <p className="mt-1 text-xs text-muted">{misslyckades}</p>
+          <p className="mt-1 text-xs text-muted">Mejlet ligger kvar där det var.</p>
+        </div>
+      )}
 
       <NyttMejl
         open={visaNytt}
@@ -711,7 +732,7 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
   )
 }
 
-function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onSkicka, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
+function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onRadera, onSkicka, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
   mejl: Mejl
   konto?: Konto
   mappar: Mapp[]
@@ -720,6 +741,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   setVisaFlytt: (v: boolean) => void
   flyttar: boolean
   onFlytta: (mappId: string) => void
+  onRadera: () => void
   onSkicka: (fromAccountId: string, till: string, amne: string, text: string) => Promise<{ ok?: boolean; fel?: string }>
   onSvaraSenare: () => void
   onSkjutUpp: (timmar: number) => void
@@ -786,6 +808,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
         <Verktyg ikon="⏳" text="Skjut upp" onClick={() => onSkjutUpp(24)} />
         <Verktyg ikon="📁" text={flyttar ? 'Flyttar…' : 'Flytta till…'} aktiv={visaFlytt} onClick={() => { if (!flyttar) { setVisaFlytt(!visaFlytt); setFlyttSok('') } }} />
+        <Verktyg ikon="🗑" text="Radera" onClick={onRadera} />
         <Verktyg ikon={mejl.flagged ? '⭐' : '☆'} text="" onClick={onStjarna} />
 
         {visaFlytt && (
