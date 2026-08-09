@@ -279,6 +279,11 @@ export default function Mail() {
     if (res?.fel) {
       setMejl(foreDetta)
       setMisslyckades(res.fel as string)
+      setTimeout(() => setMisslyckades(null), 10000)
+    } else if (res?.redanDar) {
+      // Inget flyttades — visa sanningen i stället för att låtsas
+      setMejl(foreDetta)
+      setMisslyckades('Mejlet ligger redan i den mappen.')
       setTimeout(() => setMisslyckades(null), 6000)
     } else {
       laddaAntal()
@@ -295,17 +300,37 @@ export default function Mail() {
       // Mejlen försvinner direkt ur listan — servern jobbar ikapp
       setMejl((prev) => prev.filter((m) => !valda.has(m.id)))
       const res = await anropaFunktion('mail-move-bulk', { messageIds: ids, targetFolderId: mappId })
+
+      const problem: string[] = res?.problem ?? []
+      let flyttade: number = res?.flyttade ?? 0
+
       // Mejl på andra konton måste gå den långsamma vägen, ett i taget
       const kvar: string[] = res?.kraverKontobyte ?? []
       for (let i = 0; i < kvar.length; i++) {
         setBulkArbetar(`Flyttar mellan konton (${i + 1}/${kvar.length})…`)
-        await anropaFunktion('mail-move-x', { messageId: kvar[i], targetFolderId: mappId })
+        const r = await anropaFunktion('mail-move-x', { messageId: kvar[i], targetFolderId: mappId })
+        if (r?.fel) problem.push(String(r.fel))
+        else flyttade++
       }
+
       setValda(new Set())
       setValdId(null)
+
+      // Servern är sanningen — läs om i stället för att lita på optimismen
       await laddaMejl()
       await laddaAntal()
       await laddaMeta()
+
+      if (res?.fel) {
+        setMisslyckades(String(res.fel))
+      } else if (problem.length) {
+        setMisslyckades(`${flyttade} av ${ids.length} flyttades. ${problem.join(' · ')}`)
+      } else if (flyttade < ids.length) {
+        setMisslyckades(`Bara ${flyttade} av ${ids.length} flyttades — resten ligger kvar.`)
+      }
+      if (res?.fel || problem.length || flyttade < ids.length) {
+        setTimeout(() => setMisslyckades(null), 10000)
+      }
     } finally {
       setBulkArbetar(null)
     }
