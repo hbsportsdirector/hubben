@@ -32,7 +32,7 @@ interface Mejl {
   rfc_message_id: string | null
 }
 
-interface Konto { id: string; label: string; color: string; email: string }
+interface Konto { id: string; label: string; color: string; email: string; signature: string }
 interface Mapp {
   id: string
   path: string
@@ -88,6 +88,7 @@ export default function Mail() {
   const [synkarMapp, setSynkarMapp] = useState<string | null>(null)
   const [visaFlytt, setVisaFlytt] = useState(false)
   const [flyttar, setFlyttar] = useState(false)
+  const [visaNytt, setVisaNytt] = useState(false)
   const [synkar, setSynkar] = useState(false)
   const [senastSynk, setSenastSynk] = useState<string | null>(null)
   const [nyaSenast, setNyaSenast] = useState<number | null>(null)
@@ -106,7 +107,7 @@ export default function Mail() {
 
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
-      supabase.from('hub_mail_accounts').select('id, label, color, email').eq('active', true).order('sort_order'),
+      supabase.from('hub_mail_accounts').select('id, label, color, email, signature').eq('active', true).order('sort_order'),
       supabase.from('hub_folders').select('id, path, name, account_id, total_count, unseen_count, last_synced_at').eq('hidden', false).order('path'),
     ])
     setKonton(k.data ?? [])
@@ -234,6 +235,13 @@ export default function Mail() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold tracking-tight">Mejl</h1>
+
+        <button
+          onClick={() => setVisaNytt(true)}
+          className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft"
+        >
+          ✏️ Skriv nytt
+        </button>
 
         <button
           onClick={() => synkaNu(false)}
@@ -451,6 +459,114 @@ export default function Mail() {
               <EmptyState emoji="✉️" text="Välj ett mejl" />
             </div>
           )}
+        </div>
+      </div>
+
+      <NyttMejl
+        open={visaNytt}
+        onClose={() => setVisaNytt(false)}
+        konton={konton}
+        forvaltKonto={kontoFilter !== 'alla' ? kontoFilter : konton[0]?.id}
+        onSkicka={(kropp) => anropaFunktion('mail-send', kropp)}
+      />
+    </div>
+  )
+}
+
+function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
+  open: boolean
+  onClose: () => void
+  konton: Konto[]
+  forvaltKonto?: string
+  onSkicka: (kropp: Record<string, unknown>) => Promise<{ fel?: string }>
+}) {
+  const [fran, setFran] = useState('')
+  const [till, setTill] = useState('')
+  const [amne, setAmne] = useState('')
+  const [text, setText] = useState('')
+  const [skickar, setSkickar] = useState(false)
+  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string } | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    setFran(forvaltKonto ?? konton[0]?.id ?? '')
+    setTill(''); setAmne(''); setText(''); setResultat(null)
+  }, [open, forvaltKonto, konton])
+
+  if (!open) return null
+  const valtKonto = konton.find((k) => k.id === fran)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[8vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="relative z-10 w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <h3 className="font-semibold">Nytt mejl</h3>
+          <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">✕</button>
+        </div>
+
+        <div className="space-y-2 p-5">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-12 shrink-0 text-muted">Från</span>
+            <select
+              value={fran}
+              onChange={(e) => setFran(e.target.value)}
+              className="flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-ink outline-none focus:border-accent"
+            >
+              {konton.map((k) => <option key={k.id} value={k.id}>{k.label} — {k.email}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-12 shrink-0 text-muted">Till</span>
+            <input
+              value={till}
+              onChange={(e) => setTill(e.target.value)}
+              placeholder="mottagare@exempel.se"
+              className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-12 shrink-0 text-muted">Ämne</span>
+            <input
+              value={amne}
+              onChange={(e) => setAmne(e.target.value)}
+              className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+            />
+          </div>
+
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Skriv ditt meddelande…"
+            className="min-h-56 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+          />
+
+          {valtKonto?.signature?.trim() && (
+            <div className="rounded-lg border border-dashed border-border px-3 py-2">
+              <p className="mb-1 text-[10px] uppercase tracking-wider text-muted">Signatur läggs till</p>
+              <pre className="whitespace-pre-wrap font-sans text-[11px] text-muted">{valtKonto.signature.trim()}</pre>
+            </div>
+          )}
+
+          {resultat?.fel && <p className="rounded-lg border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">{resultat.fel}</p>}
+          {resultat?.ok && <p className="rounded-lg border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">✓ Skickat</p>}
+
+          <div className="flex items-center justify-between pt-1">
+            <button onClick={onClose} className="text-xs text-muted hover:text-ink">Avbryt</button>
+            <button
+              disabled={skickar || !till.trim() || !text.trim()}
+              onClick={async () => {
+                setSkickar(true); setResultat(null)
+                const r = await onSkicka({ fromAccountId: fran, to: till.trim(), subject: amne, body: text })
+                if (r?.fel) setResultat({ fel: r.fel })
+                else { setResultat({ ok: true }); setTimeout(onClose, 1200) }
+                setSkickar(false)
+              }}
+              className="rounded-xl bg-accent px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
+            >
+              {skickar ? 'Skickar…' : 'Skicka'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -695,6 +811,15 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
               autoFocus
               className="min-h-32 w-full rounded-lg border border-border bg-card px-2.5 py-2 text-sm text-ink outline-none focus:border-accent"
             />
+
+            {konton.find((k) => k.id === franKonto)?.signature?.trim() && (
+              <div className="rounded-lg border border-dashed border-border px-2.5 py-1.5">
+                <p className="mb-1 text-[10px] uppercase tracking-wider text-muted">Signatur läggs till</p>
+                <pre className="whitespace-pre-wrap font-sans text-[11px] text-muted">
+                  {konton.find((k) => k.id === franKonto)?.signature.trim()}
+                </pre>
+              </div>
+            )}
 
             {resultat?.fel && (
               <p className="rounded-lg border border-bad/40 bg-bad/10 px-2.5 py-1.5 text-xs text-bad">{resultat.fel}</p>

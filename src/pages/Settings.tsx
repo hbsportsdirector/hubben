@@ -3,7 +3,7 @@ import { format, parseISO } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import type { HubMailAccount } from '../lib/types'
-import { Card, SectionTitle, Button, Input, Label, Spinner } from '../components/ui'
+import { Card, SectionTitle, Button, Input, Label, Spinner, Textarea } from '../components/ui'
 
 interface Testsvar {
   // Från imap-test
@@ -222,6 +222,8 @@ function AccountCard({ account, status, onSaved }: { account: HubMailAccount; st
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'fel'; text: string } | null>(null)
+  const [signatur, setSignatur] = useState(account.signature ?? '')
+  const [signSparad, setSignSparad] = useState(true)
 
   const isOutlook = account.provider === 'outlook'
   const hasSecret = Boolean(account.secret_id)
@@ -331,6 +333,32 @@ function AccountCard({ account, status, onSaved }: { account: HubMailAccount; st
           )}
         </>
       )}
+
+      {/* Signatur — läggs på automatiskt när du skickar från det här kontot */}
+      <div className="mt-4 border-t border-border pt-4">
+        <Label>Signatur</Label>
+        <Textarea
+          value={signatur}
+          onChange={(e) => { setSignatur(e.target.value); setSignSparad(false) }}
+          placeholder={`Per Lundgren\nSportchef, ${account.label}\n${account.email}`}
+          className="min-h-20 font-mono text-xs"
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <Button
+            variant="ghost"
+            className="!px-3 !py-1.5 text-xs"
+            disabled={signSparad}
+            onClick={async () => {
+              await supabase.from('hub_mail_accounts').update({ signature: signatur }).eq('id', account.id)
+              setSignSparad(true)
+              onSaved()
+            }}
+          >
+            {signSparad ? '✓ Sparad' : 'Spara signatur'}
+          </Button>
+          <span className="text-[11px] text-muted">Läggs till efter en avdelare när du skickar härifrån.</span>
+        </div>
+      </div>
 
       {msg && (
         <p className={`mt-3 rounded-xl border px-3 py-2 text-sm ${

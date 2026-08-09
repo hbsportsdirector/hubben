@@ -134,6 +134,7 @@ export interface HubMailAccount {
   smtp_port: number
   color: string
   active: boolean
+  signature: string
   secret_id: string | null
   last_checked_at: string | null
   last_error: string | null
