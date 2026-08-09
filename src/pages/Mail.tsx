@@ -614,6 +614,7 @@ export default function Mail() {
         mappar={mappar}
         konton={konton}
         msgIds={[...valda]}
+        franKonto={mejl.find((m) => valda.has(m.id))?.account_id}
         onValj={(mappId) => bulkFlytta(mappId)}
       />
 
@@ -624,6 +625,7 @@ export default function Mail() {
         mappar={mappar.filter((m) => m.id !== enkelFlytt?.folder_id)}
         konton={konton}
         msgIds={enkelFlytt ? [enkelFlytt.id] : []}
+        franKonto={enkelFlytt?.account_id}
         onValj={(mappId) => {
           const m = enkelFlytt
           setEnkelFlytt(null)
@@ -653,13 +655,14 @@ export default function Mail() {
 interface Forslag { folder_id: string; path: string; name: string; account_id: string; traffar: number; anledning: string }
 
 /** Flyttdialog: stor yta, förslag överst, tangentbordsnavigering. */
-function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, onValj }: {
+function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto, onValj }: {
   open: boolean
   onClose: () => void
   antal: number
   mappar: Mapp[]
   konton: Konto[]
   msgIds: string[]
+  franKonto?: string
   onValj: (mappId: string) => void
 }) {
   const [sok, setSok] = useState('')
@@ -680,7 +683,11 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, onValj }: 
   if (!open) return null
 
   const kortNamn = (p: string) => p.replace(/^INBOX[./]/, '').replace(/^\[Gmail\]\//, '')
-  const perKonto = konton.map((k) => ({ konto: k, mappar: traffar.filter((m) => m.account_id === k.id) })).filter((g) => g.mappar.length)
+  // Kontot mejlen ligger på hamnar först — flytt dit är den snabba, enkla vägen
+  const perKonto = konton
+    .map((k) => ({ konto: k, mappar: traffar.filter((m) => m.account_id === k.id) }))
+    .filter((g) => g.mappar.length)
+    .sort((a, b) => Number(b.konto.id === franKonto) - Number(a.konto.id === franKonto))
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[6vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -732,9 +739,14 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, onValj }: 
 
           {perKonto.map((g) => (
             <div key={g.konto.id} className="mb-5">
-              <p className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              <p className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
                 <span className="h-2 w-2 rounded-full" style={{ background: g.konto.color }} />
                 {g.konto.label}
+                {franKonto && g.konto.id !== franKonto && (
+                  <span className="rounded-full bg-warn/15 px-2 py-0.5 normal-case tracking-normal text-warn">
+                    ⚠ Annat konto — mejlet laddas upp på nytt och originalet hamnar i papperskorgen
+                  </span>
+                )}
               </p>
               <div className="grid gap-1 sm:grid-cols-2">
                 {g.mappar.map((m) => {
