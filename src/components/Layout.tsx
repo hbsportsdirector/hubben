@@ -21,48 +21,59 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
   const bred = useLocation().pathname.startsWith('/mejl')
   return (
     <div className="flex min-h-screen">
-      {/* Sidomeny (desktop) */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-border bg-surface/60 backdrop-blur-xl md:flex">
-        <div className="flex items-center gap-2 px-6 py-6">
+      {/* Sidomeny (desktop) — krymper till ikonrad i mejlvyn för att ge plats åt mappar */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-border bg-surface/60 backdrop-blur-xl transition-[width] duration-200 md:flex ${
+          bred ? 'w-16' : 'w-60'
+        }`}
+      >
+        <div className={`flex items-center gap-2 py-6 ${bred ? 'justify-center px-0' : 'px-6'}`}>
           <span className="text-2xl">🪐</span>
-          <span className="text-xl font-bold tracking-tight">Hubben</span>
+          {!bred && <span className="text-xl font-bold tracking-tight">Hubben</span>}
         </div>
-        <nav className="flex-1 space-y-1 px-3">
+        <nav className={`flex-1 space-y-1 ${bred ? 'px-2' : 'px-3'}`}>
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === '/'}
+              title={bred ? item.label : undefined}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
-                  isActive ? 'bg-accent/15 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
-                }`
+                `flex items-center gap-3 rounded-xl py-2.5 text-sm font-medium transition-colors ${
+                  bred ? 'justify-center px-0' : 'px-3'
+                } ${isActive ? 'bg-accent/15 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'}`
               }
             >
               <span aria-hidden>{item.emoji}</span>
-              {item.label}
+              {!bred && item.label}
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-border px-4 py-4">
+        <div className={`border-t border-border py-4 ${bred ? 'px-2' : 'px-4'}`}>
           <NavLink
             to="/installningar"
+            title={bred ? 'Inställningar' : undefined}
             className={({ isActive }) =>
-              `mb-3 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
-                isActive ? 'bg-accent/15 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
-              }`
+              `mb-3 flex items-center gap-2 rounded-xl py-2 text-sm font-medium transition-colors ${
+                bred ? 'justify-center px-0' : 'px-3'
+              } ${isActive ? 'bg-accent/15 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'}`
             }
           >
             <span aria-hidden>⚙️</span>
-            Inställningar
+            {!bred && 'Inställningar'}
           </NavLink>
-          <p className="mb-2 text-[10px] text-muted/70">Tips: <kbd className="rounded border border-border bg-surface px-1">Ctrl</kbd>+<kbd className="rounded border border-border bg-surface px-1">K</kbd> öppnar kommandopaletten</p>
-          <p className="mb-2 truncate text-xs text-muted" title={userEmail}>{userEmail}</p>
+          {!bred && (
+            <>
+              <p className="mb-2 text-[10px] text-muted/70">Tips: <kbd className="rounded border border-border bg-surface px-1">Ctrl</kbd>+<kbd className="rounded border border-border bg-surface px-1">K</kbd> öppnar kommandopaletten</p>
+              <p className="mb-2 truncate text-xs text-muted" title={userEmail}>{userEmail}</p>
+            </>
+          )}
           <button
             onClick={() => supabase.auth.signOut()}
-            className="w-full rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-card-hover hover:text-ink"
+            title={bred ? 'Logga ut' : undefined}
+            className={`w-full rounded-xl border border-border py-2 text-xs font-medium text-muted transition-colors hover:bg-card-hover hover:text-ink ${bred ? 'px-0' : 'px-3'}`}
           >
-            Logga ut
+            {bred ? '⏻' : 'Logga ut'}
           </button>
         </div>
       </aside>
@@ -77,7 +88,11 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
       </header>
 
       {/* Innehåll */}
-      <main className="min-w-0 flex-1 px-4 pb-24 pt-16 md:ml-60 md:px-8 md:pb-10 md:pt-8">
+      <main
+        className={`min-w-0 flex-1 px-4 pb-24 pt-16 md:pb-10 md:pt-8 ${
+          bred ? 'md:ml-16 md:px-5' : 'md:ml-60 md:px-8'
+        }`}
+      >
         <div className={`mx-auto ${bred ? 'max-w-none' : 'max-w-6xl'}`}>{children}</div>
       </main>
 
