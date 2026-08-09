@@ -33,7 +33,15 @@ interface Mejl {
 }
 
 interface Konto { id: string; label: string; color: string; email: string }
-interface Mapp { id: string; path: string; name: string; account_id: string; total_count: number | null; unseen_count: number | null }
+interface Mapp {
+  id: string
+  path: string
+  name: string
+  account_id: string
+  total_count: number | null
+  unseen_count: number | null
+  last_synced_at: string | null
+}
 
 const AVATARFARGER = ['#3987e5', '#199e70', '#c98500', '#9085e9', '#e66767', '#d55181', '#d95926', '#0ea5e9']
 function avatarFarg(n: string) {
@@ -63,12 +71,25 @@ export default function Mail() {
   const [valdId, setValdId] = useState<string | null>(null)
   const [laddar, setLaddar] = useState(true)
   const [antal, setAntal] = useState<Record<string, number>>({})
+  const [synkarMapp, setSynkarMapp] = useState<string | null>(null)
+  const [visaFlytt, setVisaFlytt] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+
+  async function anropaFunktion(namn: string, kropp: Record<string, unknown>) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return { fel: 'Ingen session' }
+    const res = await fetch(`${supabaseUrl}/functions/v1/${namn}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(kropp),
+    })
+    return await res.json()
+  }
 
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
       supabase.from('hub_mail_accounts').select('id, label, color, email').eq('active', true).order('sort_order'),
-      supabase.from('hub_folders').select('id, path, name, account_id, total_count, unseen_count').eq('hidden', false).order('path'),
+      supabase.from('hub_folders').select('id, path, name, account_id, total_count, unseen_count, last_synced_at').eq('hidden', false).order('path'),
     ])
     setKonton(k.data ?? [])
     setMappar(m.data ?? [])
@@ -226,14 +247,31 @@ export default function Mail() {
                 .map((m) => (
                   <button
                     key={m.id}
-                    onClick={() => { setMappFilter(m.id); setValdId(null) }}
+                    onClick={async () => {
+                      setMappFilter(m.id); setValdId(null)
+                      // Lat synk: hämta mappen första gången den öppnas
+                      if (!m.last_synced_at) {
+                        setSynkarMapp(m.id)
+                        await anropaFunktion('mail-sync', { folderId: m.id })
+                        await laddaMeta()
+                        await laddaMejl()
+                        setSynkarMapp(null)
+                      }
+                    }}
                     title={m.path}
                     className={`flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12px] transition-colors ${
                       mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
                     }`}
                   >
                     <span className="truncate">{m.name}</span>
-                    {(m.total_count ?? 0) > 0 && <span className="ml-auto text-[10px] text-muted/70">{m.total_count}</span>}
+                    {synkarMapp === m.id ? (
+                      <span className="ml-auto text-[10px] text-accent-soft">hämtar…</span>
+                    ) : (
+                      <>
+                        {!m.last_synced_at && <span className="ml-auto text-[10px] text-muted/40" title="Inte hämtad än">○</span>}
+                        {(m.total_count ?? 0) > 0 && <span className="ml-1 text-[10px] text-muted/70">{m.total_count}</span>}
+                      </>
+                    )}
                   </button>
                 ))}
             </div>
@@ -296,6 +334,17 @@ export default function Mail() {
             <Lasruta
               mejl={vald}
               konto={kontoAv(vald.account_id)}
+              mappar={mappar.filter((m) => m.account_id === vald.account_id && m.id !== vald.folder_id)}
+              visaFlytt={visaFlytt}
+              setVisaFlytt={setVisaFlytt}
+              onFlytta={async (mappId) => {
+                setVisaFlytt(false)
+                const svar = await anropaFunktion('mail-move', { messageId: vald.id, targetFolderId: mappId })
+                if (svar?.fel) { alert('Kunde inte flytta: ' + svar.fel); return }
+                setMejl((prev) => prev.filter((x) => x.id !== vald.id))
+                setValdId(null)
+                laddaAntal()
+              }}
               onSvaraSenare={() => svaraSenare(vald)}
               onSkjutUpp={(h) => skjutUpp(vald, h)}
               onStjarna={() => uppdatera(vald.id, { flagged: !vald.flagged })}
@@ -316,14 +365,20 @@ export default function Mail() {
   )
 }
 
-function Lasruta({ mejl, konto, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
+function Lasruta({ mejl, konto, mappar, visaFlytt, setVisaFlytt, onFlytta, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
   mejl: Mejl
   konto?: Konto
+  mappar: Mapp[]
+  visaFlytt: boolean
+  setVisaFlytt: (v: boolean) => void
+  onFlytta: (mappId: string) => void
   onSvaraSenare: () => void
   onSkjutUpp: (timmar: number) => void
   onStjarna: () => void
   onRouta: (dest: 'imbox' | 'feed' | 'papertrail') => void
 }) {
+  const [flyttSok, setFlyttSok] = useState('')
+  const traffar = mappar.filter((m) => m.path.toLowerCase().includes(flyttSok.toLowerCase())).slice(0, 40)
   const [kropp, setKropp] = useState<{ text_body: string | null; html_body: string | null } | null>(null)
   const [hamtar, setHamtar] = useState(false)
   const [fel, setFel] = useState<string | null>(null)
@@ -358,10 +413,41 @@ function Lasruta({ mejl, konto, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }:
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-0.5 border-b border-border px-3 py-2">
+      <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-3 py-2">
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
         <Verktyg ikon="⏳" text="Skjut upp" onClick={() => onSkjutUpp(24)} />
+        <Verktyg ikon="📁" text="Flytta till…" aktiv={visaFlytt} onClick={() => { setVisaFlytt(!visaFlytt); setFlyttSok('') }} />
         <Verktyg ikon={mejl.flagged ? '⭐' : '☆'} text="" onClick={onStjarna} />
+
+        {visaFlytt && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setVisaFlytt(false)} />
+            <div className="absolute left-3 top-full z-30 mt-1 w-80 overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+              <input
+                autoFocus
+                value={flyttSok}
+                onChange={(e) => setFlyttSok(e.target.value)}
+                placeholder="Sök mapp…"
+                className="w-full border-b border-border bg-transparent px-3 py-2.5 text-sm text-ink outline-none placeholder:text-muted/60"
+              />
+              <ul className="max-h-72 overflow-y-auto p-1">
+                {traffar.length === 0 && <li className="px-3 py-4 text-center text-xs text-muted">Inga mappar matchar</li>}
+                {traffar.map((m) => (
+                  <li key={m.id}>
+                    <button
+                      onClick={() => onFlytta(m.id)}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-accent/15 hover:text-ink"
+                    >
+                      <span aria-hidden>📁</span>
+                      <span className="truncate">{m.path.replace(/^INBOX[./]/, '')}</span>
+                      {(m.total_count ?? 0) > 0 && <span className="ml-auto text-[10px] text-muted/60">{m.total_count}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </>
+        )}
         <span className="ml-auto flex items-center gap-1">
           <span className="text-[10px] text-muted">Skicka framtida från denna avsändare till:</span>
           <Verktyg ikon="📥" text="" title="Inkorgen" onClick={() => onRouta('imbox')} />
