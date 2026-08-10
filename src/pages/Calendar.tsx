@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { Calendar as BigCalendar, Views } from 'react-big-calendar'
 import type { View, SlotInfo, ToolbarProps } from 'react-big-calendar'
 import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
-import { format, parseISO, addHours, startOfWeek, endOfWeek, startOfMonth, endOfMonth, addDays } from 'date-fns'
+import { format, parseISO, addHours, startOfWeek, endOfWeek, startOfMonth, endOfMonth, addDays, getISOWeek } from 'date-fns'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import '../styles/calendar.css'
@@ -283,7 +283,7 @@ export default function Calendar() {
   )
 }
 
-function SwedishToolbar({ label, onNavigate, onView, view }: ToolbarProps<CalEvent>) {
+function SwedishToolbar({ label, onNavigate, onView, view, date }: ToolbarProps<CalEvent>) {
   const views: { key: View; label: string }[] = [
     { key: Views.MONTH, label: 'Månad' },
     { key: Views.WEEK, label: 'Vecka' },
@@ -297,7 +297,13 @@ function SwedishToolbar({ label, onNavigate, onView, view }: ToolbarProps<CalEve
         <button onClick={() => onNavigate('TODAY')} className="rounded-lg border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink">Idag</button>
         <button onClick={() => onNavigate('NEXT')} className="rounded-lg px-2.5 py-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Nästa">→</button>
       </div>
-      <h2 className="text-base font-semibold capitalize">{label}</h2>
+      <h2 className="flex items-baseline gap-2 text-base font-semibold capitalize">
+        {label}
+        {/* Svensk idrott går på veckonummer — "vecka 33" är hur folk pratar */}
+        <span className="text-xs font-normal normal-case text-muted">
+          v. {getISOWeek(date as Date)}
+        </span>
+      </h2>
       <div className="flex gap-1">
         {views.map((v) => (
           <button
@@ -325,7 +331,11 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   onDelete: (id: string) => void
   kalendrar: Kalender[]
 }) {
-  const [valdKalender, setValdKalender] = useState('')
+  // null = inget val gjort än. Skiljs från tom sträng, som betyder att Per
+  // aktivt valt "Bara i Hubben". Utan den skillnaden kan en långsam
+  // kalenderladdning tyst göra händelsen lokal.
+  const [valdKalender, setValdKalender] = useState<string | null>(null)
+  const [krockar, setKrockar] = useState<string[]>([])
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState('')
@@ -349,9 +359,9 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       setColor(event.color)
       setValdKalender(event.calendar_id ?? '')
     } else {
-      // Ny händelse hamnar i första kalendern om det finns någon — det är
-      // nästan alltid det man vill, och den syns i telefonen direkt.
-      setValdKalender(kalendrar[0]?.id ?? '')
+      // Lämnas som null tills kalendrarna hunnit laddas — effekten nedanför
+      // fyller i förvalet så fort de finns.
+      setValdKalender(null)
       const start = initialStart ?? new Date()
       const isWholeDay = Boolean(initialStart && initialEnd && (initialEnd.getTime() - initialStart.getTime()) >= 86_400_000)
       setTitle('')
@@ -365,9 +375,48 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
     }
   }, [event, open, initialStart, initialEnd])
 
+  // Kalendrarna kan landa efter att formuläret öppnats. Utan det här blev
+  // förvalet "Bara i Hubben" och händelsen nådde aldrig Google.
+  useEffect(() => {
+    if (open && !event && valdKalender === null && kalendrar.length) {
+      setValdKalender(kalendrar[0].id)
+    }
+  }, [open, event, kalendrar, valdKalender])
+
+  // Krockvarning: som sportchef bokar man många lag, och en dubbelbokning
+  // vill man se innan man sparar — inte efteråt.
+  useEffect(() => {
+    if (!open || !date) { setKrockar([]); return }
+    let avbruten = false
+    const starts = allDay ? new Date(`${date}T00:00:00`) : new Date(`${date}T${time}:00`)
+    const ends = !allDay && endTime ? new Date(`${date}T${endTime}:00`) : addHours(starts, 1)
+    ;(async () => {
+      const { data } = await supabase
+        .from('hub_events')
+        .select('id, title, starts_at, ends_at, all_day')
+        .lt('starts_at', ends.toISOString())
+        .gte('starts_at', addDays(starts, -2).toISOString())
+      if (avbruten) return
+      type Rad = { id: string; title: string; starts_at: string; ends_at: string | null; all_day: boolean }
+      const traffar = ((data ?? []) as Rad[])
+        .filter((e) => e.id !== event?.id && !e.all_day && !allDay)
+        .filter((e) => {
+          const s = parseISO(e.starts_at)
+          const sl = e.ends_at ? parseISO(e.ends_at) : addHours(s, 1)
+          return s < ends && sl > starts
+        })
+        .map((e) => `${e.title} ${format(parseISO(e.starts_at), 'HH:mm')}`)
+      setKrockar(traffar)
+    })()
+    return () => { avbruten = true }
+  }, [open, date, time, endTime, allDay, event?.id])
+
   async function save() {
     if (!title.trim() || !date) return
-    const starts = allDay ? new Date(`${date}T00:00:00`) : new Date(`${date}T${time}:00`)
+    // Heldagar lagras som midnatt UTC, precis som de vi hämtar från Google.
+    // Med lokal midnatt blev tidsstämpeln 22:00 dagen innan, och då pekade
+    // datumdelen på fel dag när den skickades tillbaka till Google.
+    const starts = allDay ? new Date(`${date}T00:00:00Z`) : new Date(`${date}T${time}:00`)
     const ends = !allDay && endTime ? new Date(`${date}T${endTime}:00`) : null
     const payload = {
       title: title.trim(),
@@ -401,23 +450,31 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
           <Label>Titel</Label>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Vad händer?" autoFocus />
         </div>
-        {kalendrar.length > 0 && (
-          <div>
-            <Label>Kalender</Label>
-            <select
-              value={valdKalender}
-              onChange={(e) => setValdKalender(e.target.value)}
-              className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-            >
-              {kalendrar.map((k) => <option key={k.id} value={k.id}>{k.namn}</option>)}
-              <option value="">Bara i Hubben</option>
-            </select>
-            <p className="mt-1 text-xs text-muted">
-              {valdKalender
-                ? 'Hamnar i Google och syns i telefonen.'
-                : 'Stannar här — syns inte i Google Kalender.'}
-            </p>
-          </div>
+        {/* Alltid synlig. Doldes den när listan inte hunnit laddas blev
+            händelsen tyst lokal, och nådde aldrig Google. */}
+        <div>
+          <Label>Kalender</Label>
+          <select
+            value={valdKalender ?? ''}
+            onChange={(e) => setValdKalender(e.target.value)}
+            className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+          >
+            {kalendrar.map((k) => <option key={k.id} value={k.id}>{k.namn}</option>)}
+            <option value="">Bara i Hubben</option>
+          </select>
+          <p className={`mt-1 text-xs ${valdKalender ? 'text-muted' : 'text-warn'}`}>
+            {valdKalender
+              ? 'Hamnar i Google och syns i telefonen.'
+              : kalendrar.length
+                ? 'Stannar här — syns inte i Google Kalender.'
+                : 'Ingen Google-kalender inläst. Händelsen stannar i Hubben.'}
+          </p>
+        </div>
+
+        {krockar.length > 0 && (
+          <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+            Krockar med {krockar.join(', ')}. Du kan spara ändå.
+          </p>
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
