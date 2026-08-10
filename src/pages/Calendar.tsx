@@ -183,6 +183,22 @@ export default function Calendar() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { laddaKalendrar() }, [laddaKalendrar])
+
+  // Ligger något kvar i kön betas det av när kalendern öppnas. Utan det här
+  // krävde ett misslyckat försök att man råkade göra en ny ändring för att
+  // komma vidare — kön kunde alltså stå stilla utan att någon märkte det.
+  useEffect(() => {
+    let avbruten = false
+    ;(async () => {
+      const { count } = await supabase
+        .from('hub_events')
+        .select('*', { count: 'exact', head: true })
+        .not('pending_op', 'is', null)
+      if (!avbruten && (count ?? 0) > 0) betaAvKon()
+    })()
+    return () => { avbruten = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   useNewParam(() => { setEditEvent(null); setSlotStart(null); setSlotEnd(null); setModal(true) })
 
   const [lastFast, setLastFast] = useState<string | null>(null)
