@@ -4,6 +4,7 @@ import { sv } from 'date-fns/locale'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import type { HubMailAccount } from '../lib/types'
 import { Card, SectionTitle, Button, Input, Label, Spinner, Textarea } from '../components/ui'
+import { GoogleKalender } from '../components/GoogleKalender'
 
 interface Testsvar {
   // Från imap-test
@@ -100,6 +101,8 @@ export default function Settings() {
         <h1 className="text-2xl font-bold tracking-tight">Inställningar</h1>
         <p className="mt-1 text-sm text-muted">Dina mejlkonton är redan uppsatta — det enda som saknas är lösenorden.</p>
       </div>
+
+      <GoogleKalender />
 
       <Card className="border-accent/30 bg-accent/5">
         <div className="flex gap-3">
