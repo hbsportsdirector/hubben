@@ -15,6 +15,35 @@ import { Card, Button, Input, Label, Modal, Spinner, Textarea } from '../compone
 
 const EVENT_COLORS = ['#38bdf8', '#6366f1', '#34d399', '#fbbf24', '#f87171', '#e879f9']
 
+/** Tolkar tid som folk faktiskt skriver den.
+ *
+ *  Ett vanligt <input type="time"> kräver "10:00" — skriver man "10" händer
+ *  ingenting. Den som lägger in trettio träningstider i rad märker det.
+ *  "10", "1030", "10.30" och "10:30" ska alla duga. */
+export function tolkaTid(rå: string): string | null {
+  const s = rå.trim().replace(/[.,;]/g, ':')
+  if (!s) return null
+
+  const tvåDelar = s.match(/^(\d{1,2}):(\d{1,2})$/)
+  if (tvåDelar) {
+    const t = Number(tvåDelar[1])
+    const m = Number(tvåDelar[2])
+    if (t > 23 || m > 59) return null
+    return `${String(t).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+
+  const bara = s.match(/^(\d{1,4})$/)
+  if (bara) {
+    const d = bara[1]
+    // 1–2 siffror är hela timmar, 3–4 siffror är timmar+minuter
+    const t = d.length <= 2 ? Number(d) : Number(d.slice(0, d.length - 2))
+    const m = d.length <= 2 ? 0 : Number(d.slice(-2))
+    if (t > 23 || m > 59) return null
+    return `${String(t).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+  return null
+}
+
 interface Kalender {
   id: string
   namn: string
@@ -363,7 +392,10 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       // fyller i förvalet så fort de finns.
       setValdKalender(null)
       const start = initialStart ?? new Date()
-      const isWholeDay = Boolean(initialStart && initialEnd && (initialEnd.getTime() - initialStart.getTime()) >= 86_400_000)
+      // Att klicka på en dag i månadsvyn markerar precis ett dygn. Det betyder
+      // "ny händelse den dagen", inte "heldagshändelse" — heldag kryssas bara
+      // i om man dragit över flera dagar.
+      const isWholeDay = Boolean(initialStart && initialEnd && (initialEnd.getTime() - initialStart.getTime()) > 86_400_000)
       setTitle('')
       setDescription('')
       setLocation('')
@@ -416,8 +448,12 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
     // Heldagar lagras som midnatt UTC, precis som de vi hämtar från Google.
     // Med lokal midnatt blev tidsstämpeln 22:00 dagen innan, och då pekade
     // datumdelen på fel dag när den skickades tillbaka till Google.
-    const starts = allDay ? new Date(`${date}T00:00:00Z`) : new Date(`${date}T${time}:00`)
-    const ends = !allDay && endTime ? new Date(`${date}T${endTime}:00`) : null
+    // Tolkas även här, inte bara vid blur — trycker man Spara direkt efter att
+    // ha skrivit "1830" hinner blur aldrig köra, och datumet blir ogiltigt.
+    const start = tolkaTid(time) ?? '00:00'
+    const slut = endTime.trim() ? tolkaTid(endTime) : null
+    const starts = allDay ? new Date(`${date}T00:00:00Z`) : new Date(`${date}T${start}:00`)
+    const ends = !allDay && slut ? new Date(`${date}T${slut}:00`) : null
     const payload = {
       title: title.trim(),
       description: description.trim() || null,
@@ -492,11 +528,23 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Startar</Label>
-              <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+              <Input
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                onBlur={(e) => setTime(tolkaTid(e.target.value) ?? time)}
+                placeholder="18 eller 18:30"
+                inputMode="numeric"
+              />
             </div>
             <div>
               <Label>Slutar (valfritt)</Label>
-              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+              <Input
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                onBlur={(e) => setEndTime(e.target.value.trim() ? (tolkaTid(e.target.value) ?? endTime) : '')}
+                placeholder="19:30"
+                inputMode="numeric"
+              />
             </div>
           </div>
         )}
