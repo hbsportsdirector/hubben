@@ -1,26 +1,48 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { Spinner, EmptyState } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
 
-/** Lådor enligt HEY-modellen — Reply Later och Bubble Up spänner över alla konton.
+/** Lådorna spänner över alla konton.
+ *
+ *  Flödet och Kvitton fanns här förut, från HEY-modellen. De togs bort
+ *  2026-08-10: det som får den modellen att fungera är att posten sorteras
+ *  dit automatiskt, och den sorteringen byggdes aldrig. Två tomma fack och
+ *  ett moment till att göra för hand är sämre än inget.
  *
  *  Skickat och Papperskorgen är inte triage-lådor utan mappar, men de hör
  *  hemma här ändå: de har en roll som alla konton delar, så lådan kan samla
  *  ihop dem i stället för att man ska leta upp varje kontos mapp för sig. */
-type Lada = 'imbox' | 'feed' | 'papertrail' | 'reply_later' | 'bubble_up' | 'sent' | 'trash'
+type Lada = 'imbox' | 'reply_later' | 'sent' | 'trash'
 
 const LADOR: { id: Lada; namn: string; ikon: string; tangent: string; roll?: string }[] = [
   { id: 'imbox', namn: 'Inkorg', ikon: '📥', tangent: '1' },
-  { id: 'feed', namn: 'Flödet', ikon: '📰', tangent: '2' },
-  { id: 'papertrail', namn: 'Kvitton', ikon: '🧾', tangent: '3' },
-  { id: 'reply_later', namn: 'Svara senare', ikon: '↩️', tangent: '4' },
-  { id: 'bubble_up', namn: 'Uppskjutna', ikon: '⏳', tangent: '6' },
-  { id: 'sent', namn: 'Skickat', ikon: '📤', tangent: '7', roll: 'sent' },
-  { id: 'trash', namn: 'Papperskorgen', ikon: '🗑', tangent: '8', roll: 'trash' },
+  { id: 'reply_later', namn: 'Svara senare', ikon: '↩️', tangent: '2' },
+  { id: 'sent', namn: 'Skickat', ikon: '📤', tangent: '3', roll: 'sent' },
+  { id: 'trash', namn: 'Papperskorgen', ikon: '🗑', tangent: '4', roll: 'trash' },
 ]
+
+/** Mappar som inte är mappar. Gmail visar sina systemvyer som IMAP-mappar,
+ *  men All e-post, Viktigt och Stjärnmärkta är olika sätt att titta på SAMMA
+ *  post — inte separata brevlådor. [Gmail] självt är bara ett namnutrymme.
+ *  Egna Gmail-etiketter ligger på toppnivå och berörs inte. */
+function arVymapp(path: string, role: string | null) {
+  return path === '[Gmail]' || (path.startsWith('[Gmail]/') && (role === null || role === 'all'))
+}
+
+/** Vem raden handlar om. I Skickat är avsändaren alltid en själv — där är det
+ *  mottagaren som skiljer ett mejl från ett annat. */
+function motpart(m: Mejl): { namn: string; adress: string; prefix: string } {
+  if (m.visad_roll !== 'sent') {
+    return { namn: m.from_name || m.from_email || '(okänd)', adress: m.from_email ?? '', prefix: '' }
+  }
+  const till = (m.to_emails ?? []).filter(Boolean)
+  if (!till.length) return { namn: '(ingen mottagare)', adress: '', prefix: 'Till ' }
+  const fler = till.length > 1 ? ` +${till.length - 1}` : ''
+  return { namn: till[0] + fler, adress: till.slice(1).join(', '), prefix: 'Till ' }
+}
 
 interface Mejl {
   id: string
@@ -33,12 +55,13 @@ interface Mejl {
   seen: boolean
   flagged: boolean
   reply_later: boolean
-  bubble_up_at: string | null
-  destination: string
   has_attachments: boolean
   rfc_message_id: string | null
+  to_emails: string[] | null
   /** Mappen mejlet visas i — köad flytt medräknad */
   visad_mapp_id: string
+  /** Mappens roll: inbox, sent, trash …  */
+  visad_roll: string | null
   /** Flytten ligger i kön men mejlservern vet inte om den än */
   vantar: boolean
 }
@@ -113,6 +136,7 @@ export default function Mail() {
   // Bumpas när något utanför filtren har ändrat datan och listan måste läsas
   // om — utan att någon gammal closure får bestämma vilka filter som gäller.
   const [dataVersion, setDataVersion] = useState(0)
+  const [mappSok, setMappSok] = useState('')
   const [sok, setSok] = useState('')
   const [mejl, setMejl] = useState<Mejl[]>([])
   const [konton, setKonton] = useState<Konto[]>([])
@@ -202,30 +226,35 @@ export default function Mail() {
   }, [])
 
   const laddaAntal = useCallback(async () => {
-    const nu = new Date().toISOString()
     // Samma vy som listan — en definition av var ett mejl hör hemma
-    const olast = (lada: string) =>
+    const [imbox, senare] = await Promise.all([
       supabase.from('hub_mejl').select('*', { count: 'exact', head: true })
-        .eq('destination', lada).eq('seen', false).eq('visad_roll', 'inbox')
-    const [imbox, feed, kvitto, senare, uppskjutna] = await Promise.all([
-      olast('imbox').eq('reply_later', false),
-      olast('feed'),
-      olast('papertrail'),
+        .eq('seen', false).eq('reply_later', false).eq('visad_roll', 'inbox'),
       supabase.from('hub_mejl').select('*', { count: 'exact', head: true }).eq('reply_later', true),
-      supabase.from('hub_mejl').select('*', { count: 'exact', head: true }).gt('bubble_up_at', nu),
     ])
-    setAntal({
-      imbox: imbox.count ?? 0, feed: feed.count ?? 0, papertrail: kvitto.count ?? 0,
-      reply_later: senare.count ?? 0, bubble_up: uppskjutna.count ?? 0,
-    })
+    setAntal({ imbox: imbox.count ?? 0, reply_later: senare.count ?? 0 })
   }, [])
 
+  /** Mapplistan ska visa mappar man faktiskt navigerar till. Bort med Gmails
+   *  vy-mappar, och bort med dem som redan har en egen låda — annars är
+   *  fyrtiosju rader mest brus runt de tio man använder. */
+  const synligaMappar = useMemo(() => {
+    const q = mappSok.trim().toLowerCase()
+    const lador = new Set(LADOR.map((l) => l.roll).filter(Boolean))
+    return mappar.filter((m) => {
+      if (arVymapp(m.path, m.role)) return false
+      if (m.role === 'inbox' || (m.role && lador.has(m.role))) return false
+      if (kontoFilter !== 'alla' && m.account_id !== kontoFilter) return false
+      if (q && !m.name.toLowerCase().includes(q) && !m.path.toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [mappar, mappSok, kontoFilter])
+
   const laddaMejl = useCallback(async () => {
-    const nu = new Date().toISOString()
     // hub_mejl vet vilken mapp ett mejl visas i — även när flytten ligger kvar
     // i kön. Klienten sätter inte ihop det filtret själv längre.
     let q = supabase.from('hub_mejl')
-      .select('id, account_id, folder_id, visad_mapp_id, subject, from_name, from_email, sent_at, seen, flagged, reply_later, bubble_up_at, destination, has_attachments, rfc_message_id, vantar')
+      .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, vantar, to_emails')
       .order('sent_at', { ascending: false })
       .limit(200)
 
@@ -238,11 +267,9 @@ export default function Mail() {
       // Skickat och Papperskorgen: alla kontons mappar med den rollen
       q = q.eq('visad_roll', rollLada)
     } else if (lada === 'reply_later') q = q.eq('reply_later', true)
-    else if (lada === 'bubble_up') q = q.gt('bubble_up_at', nu)
     else {
-      q = q.eq('destination', lada).eq('reply_later', false)
-        .eq('visad_roll', 'inbox')
-        .or(`bubble_up_at.is.null,bubble_up_at.lte.${nu}`)
+      // Inkorgen är allt som ligger i en inkorgsmapp och inte väntar på svar
+      q = q.eq('reply_later', false).eq('visad_roll', 'inbox')
     }
     if (kontoFilter !== 'alla') q = q.eq('account_id', kontoFilter)
     if (sok.trim()) q = q.or(`subject.ilike.%${sok.trim()}%,from_name.ilike.%${sok.trim()}%,from_email.ilike.%${sok.trim()}%`)
@@ -311,12 +338,6 @@ export default function Mail() {
     if (lada !== 'reply_later') setMejl((prev) => prev.filter((x) => x.id !== m.id))
   }
 
-  async function skjutUpp(m: Mejl, timmar: number) {
-    const nar = new Date(Date.now() + timmar * 3600_000).toISOString()
-    await uppdatera(m.id, { bubble_up_at: nar })
-    setMejl((prev) => prev.filter((x) => x.id !== m.id))
-  }
-
   // Tangentbordstriage
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -334,7 +355,6 @@ export default function Mail() {
       if (e.key === 'k') { e.preventDefault(); setValdId(mejl[Math.max(i - 1, 0)]?.id ?? mejl[0].id) }
       if (!vald) return
       if (e.key === 'l') { e.preventDefault(); svaraSenare(vald) }
-      if (e.key === 'z') { e.preventDefault(); skjutUpp(vald, 24) }
       if (e.key === '#' || e.key === 'Delete') { e.preventDefault(); flytta([vald.id], undefined, 'trash') }
       if (e.key === 'u') { e.preventDefault(); uppdatera(vald.id, { seen: !vald.seen }) }
       if (e.key === 's') { e.preventDefault(); uppdatera(vald.id, { flagged: !vald.flagged }) }
@@ -513,48 +533,65 @@ export default function Mail() {
             ))}
           </div>
 
-          <div>
+          <div className="min-h-0 flex-1">
             <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
-              Mappar ({mappar.length})
+              Mappar ({synligaMappar.length})
             </p>
-            <div className="max-h-64 overflow-y-auto">
-              {mappar
-                .filter((m) => kontoFilter === 'alla' || m.account_id === kontoFilter)
-                .map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={async () => {
-                      setMappFilter(m.id); setValdId(null)
-                      // Lat synk: hämta mappen första gången den öppnas
-                      if (!m.last_synced_at) {
-                        setSynkarMapp(m.id)
-                        await anropaFunktion('mail-sync', { folderId: m.id })
-                        await laddaMeta()
-                        // Inte laddaMejl() här: den funktionen kommer från
-                        // renderingen där klicket skedde och har fortfarande
-                        // det FÖRRA mappvalet, så den skulle skriva över
-                        // listan med fel mapps innehåll. Räknaren får effekten
-                        // att köra om frågan med aktuellt val i stället.
-                        setDataVersion((v) => v + 1)
-                        setSynkarMapp(null)
-                      }
-                    }}
-                    title={m.path}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12px] transition-colors ${
-                      mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
-                    }`}
-                  >
-                    <span className="truncate">{m.name}</span>
-                    {synkarMapp === m.id ? (
-                      <span className="ml-auto text-[10px] text-accent-soft">hämtar…</span>
-                    ) : (
-                      <>
-                        {!m.last_synced_at && <span className="ml-auto text-[10px] text-muted/40" title="Inte hämtad än">○</span>}
-                        {(m.total_count ?? 0) > 0 && <span className="ml-1 text-[10px] text-muted/70">{m.total_count}</span>}
-                      </>
-                    )}
-                  </button>
-                ))}
+            {mappar.length > 12 && (
+              <input
+                value={mappSok}
+                onChange={(e) => setMappSok(e.target.value)}
+                placeholder="Filtrera mappar…"
+                className="mb-1.5 w-full rounded-lg border border-border bg-surface px-2 py-1 text-[12px] text-ink outline-none placeholder:text-muted/60 focus:border-accent"
+              />
+            )}
+            <div className="max-h-[46vh] overflow-y-auto">
+              {konton.map((k) => {
+                const kontotsMappar = synligaMappar.filter((m) => m.account_id === k.id)
+                if (!kontotsMappar.length) return null
+                return (
+                  <div key={k.id} className="mb-2">
+                    {/* Kontot syns med sin färg, så man vet vems mapp man väljer */}
+                    <p className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium text-muted">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: k.color }} />
+                      {k.label}
+                    </p>
+                    {kontotsMappar.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={async () => {
+                          setMappFilter(m.id); setValdId(null)
+                          // Lat synk: hämta mappen första gången den öppnas
+                          if (!m.last_synced_at) {
+                            setSynkarMapp(m.id)
+                            await anropaFunktion('mail-sync', { folderId: m.id })
+                            await laddaMeta()
+                            // Inte laddaMejl() här: den funktionen kommer från
+                            // renderingen där klicket skedde och har fortfarande
+                            // det FÖRRA mappvalet, så den skulle skriva över
+                            // listan med fel mapps innehåll. Räknaren får effekten
+                            // att köra om frågan med aktuellt val i stället.
+                            setDataVersion((v) => v + 1)
+                            setSynkarMapp(null)
+                          }
+                        }}
+                        title={m.path}
+                        className={`flex w-full items-center gap-2 rounded-lg py-1 pl-4 pr-2 text-left text-[12px] transition-colors ${
+                          mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+                        }`}
+                      >
+                        <span className="truncate">{m.name}</span>
+                        {synkarMapp === m.id
+                          ? <span className="ml-auto shrink-0 text-[10px] text-accent-soft">hämtar…</span>
+                          : (m.total_count ?? 0) > 0 && <span className="ml-auto shrink-0 text-[10px] text-muted/70">{m.total_count}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )
+              })}
+              {synligaMappar.length === 0 && (
+                <p className="px-2 py-3 text-[11px] text-muted">Inga mappar matchar.</p>
+              )}
             </div>
           </div>
         </aside>
@@ -596,7 +633,9 @@ export default function Mail() {
               <EmptyState emoji="✨" text={sok ? 'Inga träffar.' : 'Tomt här.'} />
             ) : (
               mejl.map((m, index) => {
-                const namn = m.from_name || m.from_email || '(okänd)'
+                // I Skickat ar det mottagaren som ska sta har, inte jag sjalv
+                const part = motpart(m)
+                const namn = part.namn
                 const konto = kontoAv(m.account_id)
                 const markerad = valda.has(m.id)
                 return (
@@ -631,7 +670,10 @@ export default function Mail() {
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
-                        <span className={`truncate text-[13px] ${!m.seen ? 'font-semibold text-ink' : 'text-muted'}`}>{namn}</span>
+                        <span className={`truncate text-[13px] ${!m.seen ? 'font-semibold text-ink' : 'text-muted'}`}>
+                          {part.prefix && <span className="text-muted/60">{part.prefix}</span>}
+                          {namn}
+                        </span>
                         <span className="shrink-0 text-[11px] text-muted">{visaTid(m.sent_at)}</span>
                       </span>
                       <span className={`mt-0.5 flex items-center gap-1.5 truncate text-[13px] ${!m.seen ? 'font-medium text-ink' : 'text-muted'}`}>
@@ -643,7 +685,7 @@ export default function Mail() {
                         )}
                         {m.has_attachments && <span className={`shrink-0 text-[11px] text-muted ${m.vantar ? '' : 'ml-auto'}`} title="Har bilagor">📎</span>}
                       </span>
-                      <span className="mt-0.5 block truncate text-[11px] text-muted/70">{m.from_email}</span>
+                      <span className="mt-0.5 block truncate text-[11px] text-muted/70">{part.adress || (part.prefix ? '' : m.from_email)}</span>
                     </span>
                   </button>
                   </div>
@@ -680,13 +722,7 @@ export default function Mail() {
                 return { ok: true }
               }}
               onSvaraSenare={() => svaraSenare(vald)}
-              onSkjutUpp={(h) => skjutUpp(vald, h)}
               onStjarna={() => uppdatera(vald.id, { flagged: !vald.flagged })}
-              onRouta={async (dest) => {
-                if (!vald.from_email) return
-                await supabase.rpc('hub_route_sender', { p_pattern: vald.from_email, p_destination: dest })
-                laddaMejl(); laddaAntal()
-              }}
             />
           ) : (
             <div className="flex h-full items-center justify-center">
@@ -1014,7 +1050,7 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
   )
 }
 
-function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onRadera, onSkicka, onSvaraSenare, onSkjutUpp, onStjarna, onRouta }: {
+function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onRadera, onSkicka, onSvaraSenare, onStjarna }: {
   mejl: Mejl
   konto?: Konto
   mappar: Mapp[]
@@ -1026,9 +1062,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   onRadera: () => void
   onSkicka: (kropp: Record<string, unknown>) => Promise<{ ok?: boolean; fel?: string }>
   onSvaraSenare: () => void
-  onSkjutUpp: (timmar: number) => void
   onStjarna: () => void
-  onRouta: (dest: 'imbox' | 'feed' | 'papertrail') => void
 }) {
   const [flyttSok, setFlyttSok] = useState('')
   const traffar = mappar.filter((m) => m.path.toLowerCase().includes(flyttSok.toLowerCase())).slice(0, 40)
@@ -1094,14 +1128,15 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visaSvar, kropp])
 
-  const namn = mejl.from_name || mejl.from_email || '(okänd)'
+  const part = motpart(mejl)
+  const namn = part.namn
+  const allaMottagare = (mejl.to_emails ?? []).filter(Boolean).join(', ')
 
   return (
     <div className="flex h-full flex-col">
       <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-3 py-2">
         <Verktyg ikon="✏️" text="Svara" aktiv={visaSvar} onClick={() => setVisaSvar(!visaSvar)} />
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
-        <Verktyg ikon="⏳" text="Skjut upp" onClick={() => onSkjutUpp(24)} />
         <Verktyg ikon="📁" text={flyttar ? 'Flyttar…' : 'Flytta till…'} aktiv={visaFlytt} onClick={() => { if (!flyttar) { setVisaFlytt(!visaFlytt); setFlyttSok('') } }} />
         <Verktyg ikon="🗑" text="Radera" onClick={onRadera} />
         <Verktyg ikon={mejl.flagged ? '⭐' : '☆'} text="" onClick={onStjarna} />
@@ -1144,12 +1179,6 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
             </div>
           </>
         )}
-        <span className="ml-auto flex items-center gap-1">
-          <span className="text-[10px] text-muted">Skicka framtida från denna avsändare till:</span>
-          <Verktyg ikon="📥" text="" title="Inkorgen" onClick={() => onRouta('imbox')} />
-          <Verktyg ikon="📰" text="" title="Flödet" onClick={() => onRouta('feed')} />
-          <Verktyg ikon="🧾" text="" title="Kvitton" onClick={() => onRouta('papertrail')} />
-        </span>
       </div>
 
       {/* Rubrikblocket står still — bara innehållet scrollar */}
@@ -1161,11 +1190,6 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
                 {konto.label}
               </span>
             )}
-            {mejl.bubble_up_at && new Date(mejl.bubble_up_at) > new Date() && (
-              <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[10px] font-medium text-warn">
-                ⏳ Flyter upp {format(parseISO(mejl.bubble_up_at), 'd MMM HH:mm', { locale: sv })}
-              </span>
-            )}
           </div>
 
           <h2 className="text-xl font-semibold leading-snug">{mejl.subject || '(inget ämne)'}</h2>
@@ -1175,8 +1199,15 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
               {initialer(namn)}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{namn}</p>
-              <p className="truncate text-xs text-muted">{mejl.from_email}</p>
+              <p className="truncate text-sm font-medium">
+                {part.prefix && <span className="font-normal text-muted">{part.prefix}</span>}
+                {namn}
+              </p>
+              {/* I Skickat är avsändaren jag själv — då är hela mottagarlistan
+                  det intressanta, inte min egen adress igen. */}
+              <p className="truncate text-xs text-muted">
+                {mejl.visad_roll === 'sent' ? allaMottagare : mejl.from_email}
+              </p>
             </div>
             <span className="shrink-0 text-xs text-muted">
               {mejl.sent_at && format(parseISO(mejl.sent_at), 'd MMM yyyy HH:mm', { locale: sv })}
