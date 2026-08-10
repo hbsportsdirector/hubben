@@ -37,7 +37,11 @@ interface Mejl {
   vantar: boolean
 }
 
-interface Konto { id: string; label: string; color: string; email: string; signature: string }
+interface Konto {
+  id: string; label: string; color: string; email: string; signature: string
+  /** Satt om kopian till Skickat misslyckades efter senaste sandningen */
+  sent_kopia_fel: string | null
+}
 interface Mapp {
   id: string
   path: string
@@ -167,7 +171,7 @@ export default function Mail() {
 
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
-      supabase.from('hub_mail_accounts').select('id, label, color, email, signature').eq('active', true).order('sort_order'),
+      supabase.from('hub_mail_accounts').select('id, label, color, email, signature, sent_kopia_fel').eq('active', true).order('sort_order'),
       supabase.from('hub_folders').select('id, path, name, role, account_id, total_count, unseen_count, last_synced_at').eq('hidden', false).order('path'),
     ])
     setKonton(k.data ?? [])
@@ -638,7 +642,8 @@ export default function Mail() {
                 const svar = await anropaFunktion('mail-send', { ...kropp, inReplyToId: vald.id })
                 if (svar?.fel) return { fel: svar.fel as string }
                 uppdatera(vald.id, { reply_later: false } as Partial<Mejl>)
-                return { ok: true, sparfel: svar?.sparfel ?? null }
+                setTimeout(() => laddaMeta(), 8000) // kopian till Skickat gors i bakgrunden
+                return { ok: true }
               }}
               onSvaraSenare={() => svaraSenare(vald)}
               onSkjutUpp={(h) => skjutUpp(vald, h)}
@@ -698,8 +703,36 @@ export default function Mail() {
         onClose={() => setVisaNytt(false)}
         konton={konton}
         forvaltKonto={kontoFilter !== 'alla' ? kontoFilter : konton[0]?.id}
-        onSkicka={(kropp) => anropaFunktion('mail-send', kropp)}
+        onSkicka={async (kropp) => {
+          const svar = await anropaFunktion('mail-send', kropp)
+          // Kopian till Skickat görs efter svaret — kolla utfallet strax efteråt
+          if (!svar?.fel) setTimeout(() => laddaMeta(), 8000)
+          return svar
+        }}
       />
+
+      {/* Kopian till Skickat gjordes i bakgrunden och gick fel. Ingen väntade
+          på den, så den får säga till här i stället. */}
+      {konton.filter((k) => k.sent_kopia_fel).map((k) => (
+        <div key={k.id} className="fixed bottom-4 left-4 z-50 max-w-sm rounded-xl border border-warn/40 bg-card px-4 py-3 shadow-2xl">
+          <p className="text-sm font-medium text-warn">Mejlet skickades, men inte kopian</p>
+          <p className="mt-1 text-xs text-muted">
+            {k.label}: {k.sent_kopia_fel}
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            Mottagaren har fått mejlet — det saknas bara i din Skickat-mapp.
+          </p>
+          <button
+            onClick={async () => {
+              await supabase.from('hub_mail_accounts').update({ sent_kopia_fel: null }).eq('id', k.id)
+              laddaMeta()
+            }}
+            className="mt-2 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"
+          >
+            Uppfattat
+          </button>
+        </div>
+      ))}
     </div>
   )
 }
@@ -838,14 +871,14 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
   onClose: () => void
   konton: Konto[]
   forvaltKonto?: string
-  onSkicka: (kropp: Record<string, unknown>) => Promise<{ fel?: string; sparfel?: string | null }>
+  onSkicka: (kropp: Record<string, unknown>) => Promise<{ fel?: string }>
 }) {
   const [fran, setFran] = useState('')
   const [till, setTill] = useState('')
   const [amne, setAmne] = useState('')
   const [text, setText] = useState('')
   const [skickar, setSkickar] = useState(false)
-  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string; sparfel?: string | null } | null>(null)
+  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string } | null>(null)
   const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
 
   useEffect(() => {
@@ -913,9 +946,7 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
 
           {resultat?.fel && <p className="rounded-lg border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">{resultat.fel}</p>}
           {resultat?.ok && (
-            <p className="rounded-lg border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">
-              ✓ Skickat{resultat.sparfel ? ' — men kopian till Skickat misslyckades: ' + resultat.sparfel : ' och sparat i Skickat'}
-            </p>
+            <p className="rounded-lg border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">✓ Skickat</p>
           )}
 
           <div className="flex items-center justify-between pt-1">
@@ -930,7 +961,7 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
                     attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
                   })
                   if (r?.fel) setResultat({ fel: r.fel })
-                  else { setResultat({ ok: true, sparfel: r?.sparfel }); setTimeout(onClose, 2000) }
+                  else { setResultat({ ok: true }); setTimeout(onClose, 1400) }
                 } catch (e) {
                   setResultat({ fel: e instanceof Error ? e.message : String(e) })
                 } finally {
@@ -959,7 +990,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   flyttar: boolean
   onFlytta: (mappId: string) => void
   onRadera: () => void
-  onSkicka: (kropp: Record<string, unknown>) => Promise<{ ok?: boolean; fel?: string; sparfel?: string | null }>
+  onSkicka: (kropp: Record<string, unknown>) => Promise<{ ok?: boolean; fel?: string }>
   onSvaraSenare: () => void
   onSkjutUpp: (timmar: number) => void
   onStjarna: () => void
@@ -975,7 +1006,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   const [amne, setAmne] = useState('')
   const [text, setText] = useState('')
   const [skickar, setSkickar] = useState(false)
-  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string; sparfel?: string | null } | null>(null)
+  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string } | null>(null)
   const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
 
   useEffect(() => {
@@ -1224,9 +1255,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
               <p className="rounded-lg border border-bad/40 bg-bad/10 px-2.5 py-1.5 text-xs text-bad">{resultat.fel}</p>
             )}
             {resultat?.ok && (
-              <p className="rounded-lg border border-good/40 bg-good/10 px-2.5 py-1.5 text-xs text-good">
-                ✓ Skickat{resultat.sparfel ? ' — men kopian till Skickat misslyckades: ' + resultat.sparfel : ' och sparat i Skickat'}
-              </p>
+              <p className="rounded-lg border border-good/40 bg-good/10 px-2.5 py-1.5 text-xs text-good">✓ Skickat</p>
             )}
 
             <div className="flex items-center justify-between">
