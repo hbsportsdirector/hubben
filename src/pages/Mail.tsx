@@ -5,15 +5,21 @@ import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { Spinner, EmptyState } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
 
-/** Lådor enligt HEY-modellen — Reply Later och Bubble Up spänner över alla konton. */
-type Lada = 'imbox' | 'feed' | 'papertrail' | 'reply_later' | 'bubble_up'
+/** Lådor enligt HEY-modellen — Reply Later och Bubble Up spänner över alla konton.
+ *
+ *  Skickat och Papperskorgen är inte triage-lådor utan mappar, men de hör
+ *  hemma här ändå: de har en roll som alla konton delar, så lådan kan samla
+ *  ihop dem i stället för att man ska leta upp varje kontos mapp för sig. */
+type Lada = 'imbox' | 'feed' | 'papertrail' | 'reply_later' | 'bubble_up' | 'sent' | 'trash'
 
-const LADOR: { id: Lada; namn: string; ikon: string; tangent: string }[] = [
+const LADOR: { id: Lada; namn: string; ikon: string; tangent: string; roll?: string }[] = [
   { id: 'imbox', namn: 'Inkorg', ikon: '📥', tangent: '1' },
   { id: 'feed', namn: 'Flödet', ikon: '📰', tangent: '2' },
   { id: 'papertrail', namn: 'Kvitton', ikon: '🧾', tangent: '3' },
   { id: 'reply_later', namn: 'Svara senare', ikon: '↩️', tangent: '4' },
   { id: 'bubble_up', namn: 'Uppskjutna', ikon: '⏳', tangent: '6' },
+  { id: 'sent', namn: 'Skickat', ikon: '📤', tangent: '7', roll: 'sent' },
+  { id: 'trash', namn: 'Papperskorgen', ikon: '🗑', tangent: '8', roll: 'trash' },
 ]
 
 interface Mejl {
@@ -169,6 +175,23 @@ export default function Mail() {
     }
   }
 
+  /** Skickat och Papperskorgen kan innehålla mappar som aldrig hämtats — utan
+   *  det här ser lådan tom ut fast servern har massor. */
+  async function synkaOhamtade(roll: string) {
+    const ohamtade = mappar.filter((m) => m.role === roll && !m.last_synced_at)
+    if (!ohamtade.length) return
+    setSynkarMapp(ohamtade[0].id)
+    try {
+      for (const m of ohamtade) await anropaFunktion('mail-sync', { folderId: m.id })
+      await laddaMeta()
+      // Inte laddaMejl() — den här funktionen har lådan från renderingen där
+      // klicket skedde. Räknaren låter effekten köra om med aktuellt val.
+      setDataVersion((v) => v + 1)
+    } finally {
+      setSynkarMapp(null)
+    }
+  }
+
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
       supabase.from('hub_mail_accounts').select('id, label, color, email, signature, sent_kopia_fel').eq('active', true).order('sort_order'),
@@ -206,10 +229,14 @@ export default function Mail() {
       .order('sent_at', { ascending: false })
       .limit(200)
 
+    const rollLada = LADOR.find((l) => l.id === lada)?.roll
     if (mappFilter) {
       // En vald mapp är ett eget urval. Lades lådans filter ovanpå blev
       // papperskorgen alltid tom, eftersom lådorna bara visar inkorgsmappar.
       q = q.eq('visad_mapp_id', mappFilter)
+    } else if (rollLada) {
+      // Skickat och Papperskorgen: alla kontons mappar med den rollen
+      q = q.eq('visad_roll', rollLada)
     } else if (lada === 'reply_later') q = q.eq('reply_later', true)
     else if (lada === 'bubble_up') q = q.gt('bubble_up_at', nu)
     else {
@@ -296,7 +323,11 @@ export default function Mail() {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || e.metaKey || e.ctrlKey) return
       const siffra = LADOR.find((l) => l.tangent === e.key)
-      if (siffra) { setLada(siffra.id); setMappFilter(null); setValdId(null); return }
+      if (siffra) {
+        setLada(siffra.id); setMappFilter(null); setValdId(null)
+        if (siffra.roll) synkaOhamtade(siffra.roll)
+        return
+      }
       if (!mejl.length) return
       const i = mejl.findIndex((m) => m.id === valdId)
       if (e.key === 'j') { e.preventDefault(); setValdId(mejl[Math.min(i + 1, mejl.length - 1)]?.id ?? mejl[0].id) }
@@ -442,7 +473,10 @@ export default function Mail() {
             {LADOR.map((l) => (
               <button
                 key={l.id}
-                onClick={() => { setLada(l.id); setMappFilter(null); setValdId(null) }}
+                onClick={() => {
+                  setLada(l.id); setMappFilter(null); setValdId(null)
+                  if (l.roll) synkaOhamtade(l.roll)
+                }}
                 className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors ${
                   lada === l.id && !mappFilter ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
                 }`}
