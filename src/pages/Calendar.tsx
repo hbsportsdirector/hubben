@@ -63,9 +63,12 @@ export default function Calendar() {
   }, [events, kalendrar, visaEgna])
 
   const laddaKalendrar = useCallback(async () => {
+    // Bara de kalendrar som är påslagna i Inställningar. De avstängda ska inte
+    // synas alls här — inte ens som ett avkryssat val.
     const { data } = await supabase
       .from('hub_calendars')
       .select('id, namn, color, synlig')
+      .eq('aktiv', true)
       .order('namn')
     setKalendrar((data as Kalender[]) ?? [])
   }, [])

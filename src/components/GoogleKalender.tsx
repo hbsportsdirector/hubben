@@ -2,6 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { Card } from './ui'
 
+interface Kalender {
+  id: string
+  namn: string
+  color: string
+  aktiv: boolean
+}
+
 interface Klient {
   client_id: string | null
   konto: string | null
@@ -16,22 +23,43 @@ interface Klient {
  *  tillbaka av klienten — darfor visas den aldrig ifylld, bara som "sparad". */
 export function GoogleKalender() {
   const [klient, setKlient] = useState<Klient | null>(null)
+  const [kalendrar, setKalendrar] = useState<Kalender[]>([])
   const [hemlighet, setHemlighet] = useState('')
   const [sparar, setSparar] = useState(false)
   const [ansluter, setAnsluter] = useState(false)
   const [synkar, setSynkar] = useState(false)
-  const [synkSvar, setSynkSvar] = useState<{ resultat?: { kalender: string; nya: number; borttagna: number; fel?: string }[] } | null>(null)
+  const [synkSvar, setSynkSvar] = useState<{ resultat?: { kalender: string; franGoogle: number; sparade: number; borttagna: number; fickSynktoken: boolean; fel?: string }[] } | null>(null)
   const [fel, setFel] = useState<string | null>(null)
   const [sparad, setSparad] = useState(false)
 
   const ladda = useCallback(async () => {
-    const { data } = await supabase
-      .from('hub_oauth_klienter')
-      .select('client_id, konto, ansluten_vid, sista_fel, hemlighet_id')
-      .eq('provider', 'google')
-      .maybeSingle()
+    const [{ data }, { data: kal }] = await Promise.all([
+      supabase
+        .from('hub_oauth_klienter')
+        .select('client_id, konto, ansluten_vid, sista_fel, hemlighet_id')
+        .eq('provider', 'google')
+        .maybeSingle(),
+      supabase
+        .from('hub_calendars')
+        .select('id, namn, color, aktiv')
+        .order('namn'),
+    ])
     setKlient(data ? { ...data, har_hemlighet: !!data.hemlighet_id } : null)
+    setKalendrar((kal as Kalender[]) ?? [])
   }, [])
+
+  /** Slår av eller på en kalender. Avstängd betyder att den inte hämtas hem
+   *  och inte syns någonstans i Hubben — Google rörs inte. Händelserna
+   *  rensas bort, annars ligger gamla tider kvar och spökar. */
+  async function vaxlaAktiv(k: Kalender) {
+    const nyttVarde = !k.aktiv
+    setKalendrar((prev) => prev.map((x) => (x.id === k.id ? { ...x, aktiv: nyttVarde } : x)))
+    await supabase.from('hub_calendars')
+      .update(nyttVarde ? { aktiv: true } : { aktiv: false, delta_link: null, senast_synkad: null })
+      .eq('id', k.id)
+    if (!nyttVarde) await supabase.from('hub_events').delete().eq('calendar_id', k.id)
+    await ladda()
+  }
 
   useEffect(() => { ladda() }, [ladda])
 
@@ -136,12 +164,42 @@ export function GoogleKalender() {
         )}
       </div>
 
+      {ansluten && kalendrar.length > 0 && (
+        <div className="mt-4">
+          <p className="mb-1.5 text-xs text-muted">
+            Vilka kalendrar ska finnas i Hubben? Avstängda hämtas inte alls och syns ingenstans —
+            de ligger kvar orörda i Google.
+          </p>
+          <div className="space-y-1">
+            {kalendrar.map((k) => (
+              <label
+                key={k.id}
+                className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-card-hover"
+              >
+                <input
+                  type="checkbox"
+                  checked={k.aktiv}
+                  onChange={() => vaxlaAktiv(k)}
+                  className="h-4 w-4 shrink-0 accent-accent"
+                />
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: k.color }} />
+                <span className={k.aktiv ? 'text-ink' : 'text-muted'}>{k.namn}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       {ansluten && synkSvar && (
         <div className="mt-3 space-y-1 text-xs">
           {synkSvar.resultat?.map((r, i) => (
             <p key={i} className={r.fel ? 'text-bad' : 'text-muted'}>
               <span className="text-ink">{r.kalender}</span>
-              {r.fel ? ` — ${r.fel}` : ` — ${r.nya} händelser${r.borttagna ? `, ${r.borttagna} borttagna` : ''}`}
+              {r.fel
+                ? ` — ${r.fel}`
+                : r.franGoogle === 0
+                  ? ' — tom i det här tidsspannet'
+                  : ` — ${r.sparade} av ${r.franGoogle} händelser${r.borttagna ? `, ${r.borttagna} borttagna` : ''}`}
             </p>
           ))}
           {!synkSvar.resultat?.length && <p className="text-muted">Inga kalendrar att hämta.</p>}
