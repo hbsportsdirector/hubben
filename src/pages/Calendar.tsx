@@ -6,7 +6,7 @@ import { format, parseISO, addHours, startOfWeek, endOfWeek, startOfMonth, endOf
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import '../styles/calendar.css'
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { getUserId } from '../lib/data'
 import { useNewParam } from '../lib/useNewParam'
 import { localizer, messages, formats } from '../lib/calendarLocale'
@@ -82,6 +82,7 @@ export default function Calendar() {
     const { data } = await supabase
       .from('hub_events')
       .select('*')
+      .or('pending_op.is.null,pending_op.neq.radera')
       .gte('starts_at', from.toISOString())
       .lte('starts_at', to.toISOString())
       .order('starts_at')
@@ -106,33 +107,59 @@ export default function Calendar() {
   useEffect(() => { laddaKalendrar() }, [laddaKalendrar])
   useNewParam(() => { setEditEvent(null); setSlotStart(null); setSlotEnd(null); setModal(true) })
 
-  // Händelser som kommer från Google får inte ändras här förrän skrivvägen
-  // tillbaka finns — annars ändras bara vår kopia, och de två glider isär
-  // utan att någon säger till.
   const [lastFast, setLastFast] = useState<string | null>(null)
-  function arExtern(ev: HubEvent | null | undefined) {
-    return !!ev?.calendar_id
-  }
-  function neka() {
-    setLastFast('Den här händelsen kommer från Google. Ändra den i Google Kalender så länge — skrivvägen tillbaka är inte byggd än.')
-    setTimeout(() => setLastFast(null), 6000)
-  }
+
+  /** Skickar vidare det som koats till Google. Misslyckas det star handelsen
+   *  kvar dar du lade den, med en markering, och kon forsoker igen. */
+  const betaAvKon = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      const res = await fetch(`${supabaseUrl}/functions/v1/calendar-push`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey },
+      })
+      const json = await res.json().catch(() => ({}))
+      if (json.fel) {
+        setLastFast(json.fel)
+        setTimeout(() => setLastFast(null), 12000)
+      } else if (json.problem?.length) {
+        setLastFast(`Google tog inte emot: ${json.problem.map((x: { fel: string }) => x.fel).join(' · ')}`)
+        setTimeout(() => setLastFast(null), 12000)
+      }
+    } catch { /* nasta gang */ }
+    load()
+  }, [load])
 
   async function persistTimes(ev: CalEvent, start: Date, end: Date, allDay: boolean) {
-    if (arExtern(ev.raw)) { neka(); return }
     setEvents((prev) => prev.map((x) => (x.id === ev.id ? { ...x, start, end, allDay } : x)))
     await supabase
       .from('hub_events')
-      .update({ starts_at: start.toISOString(), ends_at: allDay ? null : end.toISOString(), all_day: allDay })
+      .update({
+        starts_at: start.toISOString(),
+        ends_at: allDay ? null : end.toISOString(),
+        all_day: allDay,
+        // Hor handelsen till en Google-kalender ska andringen dit ocksa
+        ...(ev.raw.calendar_id ? { pending_op: 'andra', pending_nasta: new Date().toISOString(), pending_forsok: 0 } : {}),
+      })
       .eq('id', ev.id)
-    load()
+    if (ev.raw.calendar_id) betaAvKon(); else load()
   }
 
   async function remove(id: string) {
-    if (arExtern(events.find((e) => e.id === id)?.raw)) { neka(); return }
-    await supabase.from('hub_events').delete().eq('id', id)
+    const rad = events.find((e) => e.id === id)?.raw
     setModal(false)
-    load()
+    if (rad?.calendar_id) {
+      // Raden far ligga kvar tills Google slappt den - external_id behovs for
+      // att kunna beratta vilken handelse det galler. Den goms ur vyn sa lange.
+      await supabase.from('hub_events')
+        .update({ pending_op: 'radera', pending_nasta: new Date().toISOString(), pending_forsok: 0 })
+        .eq('id', id)
+      await betaAvKon()
+    } else {
+      await supabase.from('hub_events').delete().eq('id', id)
+      load()
+    }
   }
 
   function onSelectSlot(slot: SlotInfo) {
@@ -220,8 +247,6 @@ export default function Calendar() {
               scrollToTime={new Date(1970, 0, 1, 7, 0)}
               popup
               selectable
-              draggableAccessor={(ev) => !ev.raw.calendar_id}
-              resizableAccessor={(ev) => !ev.raw.calendar_id}
               onSelectSlot={onSelectSlot}
               onSelectEvent={(ev) => { setEditEvent(ev.raw); setModal(true) }}
               onEventDrop={({ event, start, end, isAllDay }) =>
@@ -250,7 +275,8 @@ export default function Calendar() {
         event={editEvent}
         initialStart={slotStart}
         initialEnd={slotEnd}
-        onSaved={load}
+        kalendrar={kalendrar}
+        onSaved={(tillGoogle) => (tillGoogle ? betaAvKon() : load())}
         onDelete={remove}
       />
     </div>
@@ -289,15 +315,17 @@ function SwedishToolbar({ label, onNavigate, onView, view }: ToolbarProps<CalEve
   )
 }
 
-function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, onDelete }: {
+function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, onDelete, kalendrar }: {
   open: boolean
   onClose: () => void
   event: HubEvent | null
   initialStart: Date | null
   initialEnd: Date | null
-  onSaved: () => void
+  onSaved: (tillGoogle: boolean) => void
   onDelete: (id: string) => void
+  kalendrar: Kalender[]
 }) {
+  const [valdKalender, setValdKalender] = useState('')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState('')
@@ -319,7 +347,11 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       setEndTime(event.ends_at ? format(parseISO(event.ends_at), 'HH:mm') : '')
       setAllDay(event.all_day)
       setColor(event.color)
+      setValdKalender(event.calendar_id ?? '')
     } else {
+      // Ny händelse hamnar i första kalendern om det finns någon — det är
+      // nästan alltid det man vill, och den syns i telefonen direkt.
+      setValdKalender(kalendrar[0]?.id ?? '')
       const start = initialStart ?? new Date()
       const isWholeDay = Boolean(initialStart && initialEnd && (initialEnd.getTime() - initialStart.getTime()) >= 86_400_000)
       setTitle('')
@@ -346,14 +378,20 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       all_day: allDay,
       color,
     }
+    // Tom sträng betyder "bara i Hubben" — då finns inget att skicka till Google
+    const kalenderId = valdKalender || null
+    const ko = kalenderId
+      ? { pending_op: event ? 'andra' : 'skapa', pending_nasta: new Date().toISOString(), pending_forsok: 0 }
+      : {}
+
     if (event) {
-      await supabase.from('hub_events').update(payload).eq('id', event.id)
+      await supabase.from('hub_events').update({ ...payload, ...ko }).eq('id', event.id)
     } else {
       const userId = await getUserId()
-      await supabase.from('hub_events').insert({ ...payload, user_id: userId })
+      await supabase.from('hub_events').insert({ ...payload, ...ko, calendar_id: kalenderId, user_id: userId })
     }
     onClose()
-    onSaved()
+    onSaved(!!kalenderId)
   }
 
   return (
@@ -363,6 +401,24 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
           <Label>Titel</Label>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Vad händer?" autoFocus />
         </div>
+        {kalendrar.length > 0 && (
+          <div>
+            <Label>Kalender</Label>
+            <select
+              value={valdKalender}
+              onChange={(e) => setValdKalender(e.target.value)}
+              className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+            >
+              {kalendrar.map((k) => <option key={k.id} value={k.id}>{k.namn}</option>)}
+              <option value="">Bara i Hubben</option>
+            </select>
+            <p className="mt-1 text-xs text-muted">
+              {valdKalender
+                ? 'Hamnar i Google och syns i telefonen.'
+                : 'Stannar här — syns inte i Google Kalender.'}
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label>Datum</Label>
