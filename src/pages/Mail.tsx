@@ -4,6 +4,7 @@ import { sv } from 'date-fns/locale'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { Spinner, EmptyState } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
+import { MejlTillHubben, DagensSchema } from '../components/MejlTillHubben'
 
 /** Lådorna spänner över alla konton.
  *
@@ -280,6 +281,23 @@ export default function Mail() {
     setLaddar(false)
   }, [lada, kontoFilter, mappFilter, sok, dataVersion])
 
+  // Länk från en uppgift: ?mejl=<id>. Mejlet kan ligga i en annan låda eller
+  // mapp än den man står i, så det hämtas separat och läggs till i listan —
+  // annars leder länken till en tom läsruta.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('mejl')
+    if (!id) return
+    window.history.replaceState({}, '', window.location.pathname)
+    ;(async () => {
+      const { data } = await supabase.from('hub_mejl')
+        .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, vantar, to_emails')
+        .eq('id', id).maybeSingle()
+      if (!data) return
+      setMejl((prev) => (prev.some((m) => m.id === id) ? prev : [data as Mejl, ...prev]))
+      setValdId(id)
+    })()
+  }, [])
+
   useEffect(() => { laddaMeta() }, [laddaMeta])
   useEffect(() => { laddaMejl(); laddaAntal() }, [laddaMejl, laddaAntal])
 
@@ -488,6 +506,8 @@ export default function Mail() {
       <div className="flex gap-3" style={{ height: 'calc(100vh - 8.5rem)' }}>
         {/* Lådor, konton och mappar */}
         <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-3 xl:flex">
+          <DagensSchema />
+
           <div>
             <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Lådor</p>
             {LADOR.map((l) => (
@@ -1065,6 +1085,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   onStjarna: () => void
 }) {
   const [flyttSok, setFlyttSok] = useState('')
+  const [kvitto, setKvitto] = useState<string | null>(null)
   const traffar = mappar.filter((m) => m.path.toLowerCase().includes(flyttSok.toLowerCase())).slice(0, 40)
 
   // Svarsruta — avsändaren förvald till kontot mejlet kom till
@@ -1139,6 +1160,13 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
         <Verktyg ikon="📁" text={flyttar ? 'Flyttar…' : 'Flytta till…'} aktiv={visaFlytt} onClick={() => { if (!flyttar) { setVisaFlytt(!visaFlytt); setFlyttSok('') } }} />
         <Verktyg ikon="🗑" text="Radera" onClick={onRadera} />
+        <span className="mx-1 h-4 w-px bg-border" />
+        <MejlTillHubben
+          msgId={mejl.id}
+          amne={mejl.subject}
+          franEpost={mejl.from_email}
+          onKlart={(t) => { setKvitto(t); setTimeout(() => setKvitto(null), 4000) }}
+        />
         <Verktyg ikon={mejl.flagged ? '⭐' : '☆'} text="" onClick={onStjarna} />
 
         {visaFlytt && (
@@ -1180,6 +1208,12 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
           </>
         )}
       </div>
+
+      {kvitto && (
+        <p className="shrink-0 border-b border-good/30 bg-good/10 px-6 py-1.5 text-xs text-good">
+          ✓ {kvitto}
+        </p>
+      )}
 
       {/* Rubrikblocket står still — bara innehållet scrollar */}
       <div className="shrink-0 border-b border-border">

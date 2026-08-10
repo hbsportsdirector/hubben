@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { format, isToday, isPast, parseISO } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase } from '../lib/supabase'
@@ -124,10 +125,23 @@ export default function Tasks() {
                       <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: priorityMeta[task.priority].color }} title={`Prioritet: ${priorityMeta[task.priority].label}`} />
                       <div className="min-w-0 flex-1">
                         <p className={`truncate text-sm ${task.done ? 'text-muted line-through' : ''}`}>{task.title}</p>
-                        {(project || task.notes) && (
+                        {(project || task.notes || task.mail_msg_id) && (
                           <p className="truncate text-xs text-muted">
                             {project && <span style={{ color: project.color }}>{project.name}</span>}
-                            {project && task.notes && ' · '}
+                            {project && (task.notes || task.mail_msg_id) && ' · '}
+                            {/* Kom uppgiften ur ett mejl går det att hoppa
+                                tillbaka dit — det var hela poängen med att
+                                slippa mejla sig själv. */}
+                            {task.mail_msg_id && (
+                              <Link
+                                to={`/mejl?mejl=${task.mail_msg_id}`}
+                                className="text-accent-soft hover:underline"
+                                title={task.mail_avsandare ?? undefined}
+                              >
+                                📧 från mejl
+                              </Link>
+                            )}
+                            {task.mail_msg_id && task.notes && ' · '}
                             {task.notes}
                           </p>
                         )}

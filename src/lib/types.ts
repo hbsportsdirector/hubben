@@ -7,6 +7,9 @@ export interface HubProject {
 }
 
 export interface HubTask {
+  /** Satt om uppgiften skapades ur ett mejl */
+  mail_msg_id?: string | null
+  mail_avsandare?: string | null
   id: string
   user_id: string
   project_id: string | null
