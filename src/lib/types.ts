@@ -53,6 +53,8 @@ export interface HubEvent {
   user_id: string
   /** Satt om handelsen kommer fran en extern kalender (Google) */
   calendar_id?: string | null
+  /** Satt om handelsen ar ett tillfalle ur en aterkommande serie */
+  series_master_id?: string | null
   title: string
   description: string | null
   location: string | null

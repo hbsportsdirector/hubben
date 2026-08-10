@@ -15,6 +15,42 @@ import { Card, Button, Input, Label, Modal, Spinner, Textarea } from '../compone
 
 const EVENT_COLORS = ['#38bdf8', '#6366f1', '#34d399', '#fbbf24', '#f87171', '#e879f9']
 
+const VECKODAGAR = [
+  { kod: 'MO', namn: 'må' }, { kod: 'TU', namn: 'ti' }, { kod: 'WE', namn: 'on' },
+  { kod: 'TH', namn: 'to' }, { kod: 'FR', namn: 'fr' }, { kod: 'SA', namn: 'lö' },
+  { kod: 'SU', namn: 'sö' },
+]
+
+type Upprepning = 'aldrig' | 'dag' | 'vecka' | 'varannan' | 'manad' | 'ar'
+
+const UPPREPNINGAR: { id: Upprepning; namn: string }[] = [
+  { id: 'aldrig', namn: 'Upprepas inte' },
+  { id: 'dag', namn: 'Varje dag' },
+  { id: 'vecka', namn: 'Varje vecka' },
+  { id: 'varannan', namn: 'Varannan vecka' },
+  { id: 'manad', namn: 'Varje månad' },
+  { id: 'ar', namn: 'Varje år' },
+]
+
+/** Bygger en upprepningsregel enligt RFC 5545. Vi tolkar den aldrig själva —
+ *  Google expanderar serien och ger tillbaka de enskilda tillfällena. */
+export function byggRrule(u: Upprepning, dagar: string[], tillOchMed: string): string | null {
+  if (u === 'aldrig') return null
+  const delar: string[] = []
+  if (u === 'dag') delar.push('FREQ=DAILY')
+  else if (u === 'manad') delar.push('FREQ=MONTHLY')
+  else if (u === 'ar') delar.push('FREQ=YEARLY')
+  else {
+    delar.push('FREQ=WEEKLY')
+    if (u === 'varannan') delar.push('INTERVAL=2')
+    if (dagar.length) delar.push('BYDAY=' + dagar.join(','))
+  }
+  // UNTIL är inklusive och måste vara i UTC. Sista sekunden på slutdagen
+  // räcker gott — annars faller sista tillfället bort.
+  if (tillOchMed) delar.push('UNTIL=' + tillOchMed.replace(/-/g, '') + 'T235900Z')
+  return delar.join(';')
+}
+
 /** Tolkar tid som folk faktiskt skriver den.
  *
  *  Ett vanligt <input type="time"> kräver "10:00" — skriver man "10" händer
@@ -175,14 +211,14 @@ export default function Calendar() {
     if (ev.raw.calendar_id) betaAvKon(); else load()
   }
 
-  async function remove(id: string) {
+  async function remove(id: string, omfattning: 'instans' | 'serie' = 'instans') {
     const rad = events.find((e) => e.id === id)?.raw
     setModal(false)
     if (rad?.calendar_id) {
       // Raden far ligga kvar tills Google slappt den - external_id behovs for
       // att kunna beratta vilken handelse det galler. Den goms ur vyn sa lange.
       await supabase.from('hub_events')
-        .update({ pending_op: 'radera', pending_nasta: new Date().toISOString(), pending_forsok: 0 })
+        .update({ pending_op: 'radera', pending_scope: rad.series_master_id ? omfattning : null, pending_nasta: new Date().toISOString(), pending_forsok: 0 })
         .eq('id', id)
       await betaAvKon()
     } else {
@@ -357,7 +393,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   initialStart: Date | null
   initialEnd: Date | null
   onSaved: (tillGoogle: boolean) => void
-  onDelete: (id: string) => void
+  onDelete: (id: string, omfattning: 'instans' | 'serie') => void
   kalendrar: Kalender[]
 }) {
   // null = inget val gjort än. Skiljs från tom sträng, som betyder att Per
@@ -365,6 +401,14 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   // kalenderladdning tyst göra händelsen lokal.
   const [valdKalender, setValdKalender] = useState<string | null>(null)
   const [krockar, setKrockar] = useState<string[]>([])
+  const [upprepning, setUpprepning] = useState<Upprepning>('aldrig')
+  const [veckodagar, setVeckodagar] = useState<string[]>([])
+  const [tillOchMed, setTillOchMed] = useState('')
+  // Vad en ändring på ett tillfälle ur en serie ska gälla
+  const [omfattning, setOmfattning] = useState<'instans' | 'serie'>('instans')
+
+  // Ett tillfälle ur en serie — Google har expanderat den åt oss
+  const iSerie = !!event?.series_master_id
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState('')
@@ -387,6 +431,12 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       setAllDay(event.all_day)
       setColor(event.color)
       setValdKalender(event.calendar_id ?? '')
+      // Serier ändras aldrig till en annan upprepning härifrån — det gör man
+      // i Google. Här handlar det om att ändra tid, titel eller plats.
+      setUpprepning('aldrig')
+      setVeckodagar([])
+      setTillOchMed('')
+      setOmfattning('instans')
     } else {
       // Lämnas som null tills kalendrarna hunnit laddas — effekten nedanför
       // fyller i förvalet så fort de finns.
@@ -404,6 +454,12 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       setEndTime(initialEnd && !isWholeDay ? format(initialEnd, 'HH:mm') : '')
       setAllDay(isWholeDay)
       setColor(EVENT_COLORS[0])
+      setUpprepning('aldrig')
+      // Veckodagen som förval är den man valt — "varje vecka" betyder
+      // nästan alltid samma veckodag som händelsen ligger på
+      setVeckodagar([VECKODAGAR[(start.getDay() + 6) % 7].kod])
+      setTillOchMed('')
+      setOmfattning('instans')
     }
   }, [event, open, initialStart, initialEnd])
 
@@ -466,14 +522,22 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
     // Tom sträng betyder "bara i Hubben" — då finns inget att skicka till Google
     const kalenderId = valdKalender || null
     const ko = kalenderId
-      ? { pending_op: event ? 'andra' : 'skapa', pending_nasta: new Date().toISOString(), pending_forsok: 0 }
+      ? {
+          pending_op: event ? 'andra' : 'skapa',
+          pending_scope: iSerie ? omfattning : null,
+          pending_nasta: new Date().toISOString(),
+          pending_forsok: 0,
+        }
       : {}
 
     if (event) {
       await supabase.from('hub_events').update({ ...payload, ...ko }).eq('id', event.id)
     } else {
       const userId = await getUserId()
-      await supabase.from('hub_events').insert({ ...payload, ...ko, calendar_id: kalenderId, user_id: userId })
+      const rrule = byggRrule(upprepning, veckodagar, tillOchMed)
+      await supabase.from('hub_events').insert({
+        ...payload, ...ko, rrule, calendar_id: kalenderId, user_id: userId,
+      })
     }
     onClose()
     onSaved(!!kalenderId)
@@ -511,6 +575,82 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
           <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
             Krockar med {krockar.join(', ')}. Du kan spara ändå.
           </p>
+        )}
+
+        {/* Serier skapas här, men ändras alltid som antingen ett tillfälle
+            eller hela serien — aldrig genom att skriva om regeln. */}
+        {!event && valdKalender && (
+          <div>
+            <Label>Upprepas</Label>
+            <select
+              value={upprepning}
+              onChange={(e) => setUpprepning(e.target.value as Upprepning)}
+              className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+            >
+              {UPPREPNINGAR.map((u) => <option key={u.id} value={u.id}>{u.namn}</option>)}
+            </select>
+
+            {(upprepning === 'vecka' || upprepning === 'varannan') && (
+              <div className="mt-2 flex gap-1">
+                {VECKODAGAR.map((d) => {
+                  const pa = veckodagar.includes(d.kod)
+                  return (
+                    <button
+                      key={d.kod}
+                      type="button"
+                      onClick={() => setVeckodagar((prev) =>
+                        pa ? prev.filter((x) => x !== d.kod) : [...prev, d.kod])}
+                      className={`h-8 w-8 rounded-lg text-xs font-medium capitalize transition-colors ${
+                        pa ? 'bg-accent text-white' : 'border border-border text-muted hover:text-ink'
+                      }`}
+                    >
+                      {d.namn}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {upprepning !== 'aldrig' && (
+              <div className="mt-2">
+                <Label>Till och med (valfritt)</Label>
+                <Input type="date" value={tillOchMed} onChange={(e) => setTillOchMed(e.target.value)} />
+                <p className="mt-1 text-xs text-muted">
+                  {tillOchMed ? 'Sista tillfället den dagen.' : 'Utan slutdatum fortsätter serien tills vidare.'}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {iSerie && (
+          <div className="rounded-xl border border-border bg-surface p-3">
+            <p className="mb-2 text-xs text-muted">
+              Det här är ett tillfälle ur en återkommande serie. Vad ska ändringen gälla?
+            </p>
+            <div className="flex gap-2">
+              {([
+                { id: 'instans', namn: 'Bara det här tillfället' },
+                { id: 'serie', namn: 'Hela serien' },
+              ] as const).map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => setOmfattning(v.id)}
+                  className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                    omfattning === v.id ? 'bg-accent text-white' : 'border border-border text-muted hover:text-ink'
+                  }`}
+                >
+                  {v.namn}
+                </button>
+              ))}
+            </div>
+            {omfattning === 'serie' && (
+              <p className="mt-2 text-xs text-warn">
+                Ändrar du tiden flyttas alla tillfällen — även de som varit.
+              </p>
+            )}
+          </div>
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -572,7 +712,9 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
         </div>
         <div className="flex justify-between gap-2 pt-2">
           {event ? (
-            <Button variant="danger" onClick={() => onDelete(event.id)}>Ta bort</Button>
+            <Button variant="danger" onClick={() => onDelete(event.id, omfattning)}>
+              {iSerie && omfattning === 'serie' ? 'Ta bort hela serien' : 'Ta bort'}
+            </Button>
           ) : <span />}
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose}>Avbryt</Button>
