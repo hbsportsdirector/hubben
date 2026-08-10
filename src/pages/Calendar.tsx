@@ -72,7 +72,20 @@ export default function Calendar() {
   useEffect(() => { load() }, [load])
   useNewParam(() => { setEditEvent(null); setSlotStart(null); setSlotEnd(null); setModal(true) })
 
+  // Händelser som kommer från Google får inte ändras här förrän skrivvägen
+  // tillbaka finns — annars ändras bara vår kopia, och de två glider isär
+  // utan att någon säger till.
+  const [lastFast, setLastFast] = useState<string | null>(null)
+  function arExtern(ev: HubEvent | null | undefined) {
+    return !!ev?.calendar_id
+  }
+  function neka() {
+    setLastFast('Den här händelsen kommer från Google. Ändra den i Google Kalender så länge — skrivvägen tillbaka är inte byggd än.')
+    setTimeout(() => setLastFast(null), 6000)
+  }
+
   async function persistTimes(ev: CalEvent, start: Date, end: Date, allDay: boolean) {
+    if (arExtern(ev.raw)) { neka(); return }
     setEvents((prev) => prev.map((x) => (x.id === ev.id ? { ...x, start, end, allDay } : x)))
     await supabase
       .from('hub_events')
@@ -82,6 +95,7 @@ export default function Calendar() {
   }
 
   async function remove(id: string) {
+    if (arExtern(events.find((e) => e.id === id)?.raw)) { neka(); return }
     await supabase.from('hub_events').delete().eq('id', id)
     setModal(false)
     load()
@@ -103,6 +117,10 @@ export default function Calendar() {
         </Button>
       </div>
 
+      {lastFast && (
+        <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">{lastFast}</p>
+      )}
+
       <Card className="!p-4">
         {loading ? <Spinner /> : (
           <div style={{ height: '72vh', minHeight: 520 }}>
@@ -122,6 +140,8 @@ export default function Calendar() {
               scrollToTime={new Date(1970, 0, 1, 7, 0)}
               popup
               selectable
+              draggableAccessor={(ev) => !ev.raw.calendar_id}
+              resizableAccessor={(ev) => !ev.raw.calendar_id}
               onSelectSlot={onSelectSlot}
               onSelectEvent={(ev) => { setEditEvent(ev.raw); setModal(true) }}
               onEventDrop={({ event, start, end, isAllDay }) =>

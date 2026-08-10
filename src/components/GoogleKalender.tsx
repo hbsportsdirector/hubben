@@ -19,6 +19,8 @@ export function GoogleKalender() {
   const [hemlighet, setHemlighet] = useState('')
   const [sparar, setSparar] = useState(false)
   const [ansluter, setAnsluter] = useState(false)
+  const [synkar, setSynkar] = useState(false)
+  const [synkSvar, setSynkSvar] = useState<{ resultat?: { kalender: string; nya: number; borttagna: number; fel?: string }[] } | null>(null)
   const [fel, setFel] = useState<string | null>(null)
   const [sparad, setSparad] = useState(false)
 
@@ -77,6 +79,26 @@ export function GoogleKalender() {
     }
   }
 
+  async function synka() {
+    setSynkar(true); setFel(null); setSynkSvar(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { setFel('Ingen aktiv session'); return }
+      const res = await fetch(`${supabaseUrl}/functions/v1/calendar-sync`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey },
+      })
+      const json = await res.json().catch(() => ({}))
+      if (json.fel) setFel(json.fel)
+      else setSynkSvar(json)
+      await ladda()
+    } catch (e) {
+      setFel(String(e))
+    } finally {
+      setSynkar(false)
+    }
+  }
+
   async function kopplaBort() {
     await supabase.rpc('hub_koppla_bort_oauth', { p_provider: 'google' })
     await ladda()
@@ -96,14 +118,35 @@ export function GoogleKalender() {
           </p>
         </div>
         {ansluten && (
-          <button
-            onClick={kopplaBort}
-            className="rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-ink"
-          >
-            Koppla bort
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={synka}
+              disabled={synkar}
+              className="rounded-xl bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
+            >
+              {synkar ? 'Hämtar…' : '↻ Hämta kalendern'}
+            </button>
+            <button
+              onClick={kopplaBort}
+              className="rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-ink"
+            >
+              Koppla bort
+            </button>
+          </div>
         )}
       </div>
+
+      {ansluten && synkSvar && (
+        <div className="mt-3 space-y-1 text-xs">
+          {synkSvar.resultat?.map((r, i) => (
+            <p key={i} className={r.fel ? 'text-bad' : 'text-muted'}>
+              <span className="text-ink">{r.kalender}</span>
+              {r.fel ? ` — ${r.fel}` : ` — ${r.nya} händelser${r.borttagna ? `, ${r.borttagna} borttagna` : ''}`}
+            </p>
+          ))}
+          {!synkSvar.resultat?.length && <p className="text-muted">Inga kalendrar att hämta.</p>}
+        </div>
+      )}
 
       {!ansluten && (
         <div className="mt-4 space-y-3">
