@@ -209,6 +209,94 @@ export function Bilagor({ msgId, aktiv }: { msgId: string; aktiv: boolean }) {
   )
 }
 
+/* ── Bifoga filer till utgående mejl ──────────────────────── */
+
+export interface UtgaendeBilaga {
+  filename: string
+  contentType: string
+  dataBase64: string
+  storlek: number
+}
+
+/** Servern nekar över 15 MB, så vi säger till här i stället för att låta
+ *  användaren skriva klart ett mejl som ändå inte går att skicka. */
+export const MAX_UTGAENDE = 15 * 1024 * 1024
+
+function tillBas64(buf: ArrayBuffer) {
+  const bytes = new Uint8Array(buf)
+  let bin = ''
+  // I bitar — String.fromCharCode tar inte emot hur många argument som helst
+  const steg = 0x8000
+  for (let i = 0; i < bytes.length; i += steg) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + steg))
+  }
+  return btoa(bin)
+}
+
+export function Bifoga({ bilagor, setBilagor }: {
+  bilagor: UtgaendeBilaga[]
+  setBilagor: (b: UtgaendeBilaga[]) => void
+}) {
+  const input = useRef<HTMLInputElement>(null)
+  const [laser, setLaser] = useState(false)
+  const summa = bilagor.reduce((s, b) => s + b.storlek, 0)
+
+  return (
+    <div>
+      <input
+        ref={input}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={async (e) => {
+          const filer = [...(e.target.files ?? [])]
+          e.target.value = ''
+          if (!filer.length) return
+          setLaser(true)
+          const nya: UtgaendeBilaga[] = []
+          for (const f of filer) {
+            nya.push({
+              filename: f.name,
+              contentType: f.type || 'application/octet-stream',
+              dataBase64: tillBas64(await f.arrayBuffer()),
+              storlek: f.size,
+            })
+          }
+          setBilagor([...bilagor, ...nya])
+          setLaser(false)
+        }}
+      />
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          disabled={laser}
+          onClick={() => input.current?.click()}
+          className="rounded-lg border border-border px-2 py-1 text-[11px] text-muted transition-colors hover:text-ink disabled:opacity-50"
+        >
+          {laser ? 'Läser…' : '📎 Bifoga fil'}
+        </button>
+        {bilagor.map((b, i) => (
+          <span key={i} className="flex items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-[11px] text-muted">
+            <span className="max-w-40 truncate text-ink">{b.filename}</span>
+            <span>{storlek(b.storlek)}</span>
+            <button
+              type="button"
+              onClick={() => setBilagor(bilagor.filter((_, j) => j !== i))}
+              className="text-muted hover:text-bad"
+              aria-label={`Ta bort ${b.filename}`}
+            >✕</button>
+          </span>
+        ))}
+      </div>
+      {summa > MAX_UTGAENDE && (
+        <p className="mt-1 text-[11px] text-bad">
+          {storlek(summa)} totalt — servern tar emot högst 15 MB. Ta bort något.
+        </p>
+      )}
+    </div>
+  )
+}
+
 /* ── Förhandsvisning ──────────────────────────────────────── */
 
 function Forhandsvisning({ bilagor, index, setIndex, hamta, onStang }: {

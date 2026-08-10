@@ -3,7 +3,7 @@ import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { Spinner, EmptyState } from '../components/ui'
-import { Bilagor } from '../components/Bilagor'
+import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
 
 /** Lådor enligt HEY-modellen — Reply Later och Bubble Up spänner över alla konton. */
 type Lada = 'imbox' | 'feed' | 'papertrail' | 'reply_later' | 'bubble_up'
@@ -70,6 +70,22 @@ function stada(text: string | null): string {
     .replace(/[ \t]+$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/** Citerar originalet som i vilken mejlklient som helst. Textversionen om
+ *  den finns, annars en avskalad html-version. */
+function byggCitat(m: Mejl, kropp: { text_body: string | null; html_body: string | null }) {
+  const raa = kropp.text_body?.trim() || (kropp.html_body ?? '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  const text = stada(raa).slice(0, 10000)
+  const nar = m.sent_at ? format(parseISO(m.sent_at), "d MMMM yyyy 'kl.' HH:mm", { locale: sv }) : 'tidigare'
+  const vem = m.from_name ? `${m.from_name} <${m.from_email ?? ''}>` : (m.from_email ?? 'okänd avsändare')
+  const citerat = text.split('\n').map((r) => `> ${r}`).join('\n')
+  return `\n\nDen ${nar} skrev ${vem}:\n${citerat}`
 }
 
 function visaTid(iso: string | null) {
@@ -606,13 +622,11 @@ export default function Mail() {
               flyttar={flyttar}
               onFlytta={(mappId) => { setVisaFlytt(false); flytta([vald.id], mappId) }}
               onRadera={() => flytta([vald.id], undefined, 'trash')}
-              onSkicka={async (fromAccountId, till, amne, text) => {
-                const svar = await anropaFunktion('mail-send', {
-                  fromAccountId, to: till, subject: amne, body: text, inReplyToId: vald.id,
-                })
+              onSkicka={async (kropp) => {
+                const svar = await anropaFunktion('mail-send', { ...kropp, inReplyToId: vald.id })
                 if (svar?.fel) return { fel: svar.fel as string }
                 uppdatera(vald.id, { reply_later: false } as Partial<Mejl>)
-                return { ok: true }
+                return { ok: true, sparfel: svar?.sparfel ?? null }
               }}
               onSvaraSenare={() => svaraSenare(vald)}
               onSkjutUpp={(h) => skjutUpp(vald, h)}
@@ -812,19 +826,20 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
   onClose: () => void
   konton: Konto[]
   forvaltKonto?: string
-  onSkicka: (kropp: Record<string, unknown>) => Promise<{ fel?: string }>
+  onSkicka: (kropp: Record<string, unknown>) => Promise<{ fel?: string; sparfel?: string | null }>
 }) {
   const [fran, setFran] = useState('')
   const [till, setTill] = useState('')
   const [amne, setAmne] = useState('')
   const [text, setText] = useState('')
   const [skickar, setSkickar] = useState(false)
-  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string } | null>(null)
+  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string; sparfel?: string | null } | null>(null)
+  const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
 
   useEffect(() => {
     if (!open) return
     setFran(forvaltKonto ?? konton[0]?.id ?? '')
-    setTill(''); setAmne(''); setText(''); setResultat(null)
+    setTill(''); setAmne(''); setText(''); setResultat(null); setBilagor([])
   }, [open, forvaltKonto, konton])
 
   if (!open) return null
@@ -875,6 +890,8 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
             className="min-h-56 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
           />
 
+          <Bifoga bilagor={bilagor} setBilagor={setBilagor} />
+
           {valtKonto?.signature?.trim() && (
             <div className="rounded-lg border border-dashed border-border px-3 py-2">
               <p className="mb-1 text-[10px] uppercase tracking-wider text-muted">Signatur läggs till</p>
@@ -883,17 +900,24 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
           )}
 
           {resultat?.fel && <p className="rounded-lg border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">{resultat.fel}</p>}
-          {resultat?.ok && <p className="rounded-lg border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">✓ Skickat</p>}
+          {resultat?.ok && (
+            <p className="rounded-lg border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">
+              ✓ Skickat{resultat.sparfel ? ' — men kopian till Skickat misslyckades: ' + resultat.sparfel : ' och sparat i Skickat'}
+            </p>
+          )}
 
           <div className="flex items-center justify-between pt-1">
             <button onClick={onClose} className="text-xs text-muted hover:text-ink">Avbryt</button>
             <button
-              disabled={skickar || !till.trim() || !text.trim()}
+              disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
               onClick={async () => {
                 setSkickar(true); setResultat(null)
-                const r = await onSkicka({ fromAccountId: fran, to: till.trim(), subject: amne, body: text })
+                const r = await onSkicka({
+                  fromAccountId: fran, to: till.trim(), subject: amne, body: text,
+                  attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
+                })
                 if (r?.fel) setResultat({ fel: r.fel })
-                else { setResultat({ ok: true }); setTimeout(onClose, 1200) }
+                else { setResultat({ ok: true, sparfel: r?.sparfel }); setTimeout(onClose, 2000) }
                 setSkickar(false)
               }}
               className="rounded-xl bg-accent px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
@@ -917,7 +941,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   flyttar: boolean
   onFlytta: (mappId: string) => void
   onRadera: () => void
-  onSkicka: (fromAccountId: string, till: string, amne: string, text: string) => Promise<{ ok?: boolean; fel?: string }>
+  onSkicka: (kropp: Record<string, unknown>) => Promise<{ ok?: boolean; fel?: string; sparfel?: string | null }>
   onSvaraSenare: () => void
   onSkjutUpp: (timmar: number) => void
   onStjarna: () => void
@@ -933,10 +957,11 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   const [amne, setAmne] = useState('')
   const [text, setText] = useState('')
   const [skickar, setSkickar] = useState(false)
-  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string } | null>(null)
+  const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string; sparfel?: string | null } | null>(null)
+  const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
 
   useEffect(() => {
-    setVisaSvar(false); setResultat(null)
+    setVisaSvar(false); setResultat(null); setBilagor([])
     setFranKonto(mejl.account_id)
     setTill(mejl.from_email ?? '')
     setAmne(/^re:/i.test(mejl.subject) ? mejl.subject : `Re: ${mejl.subject}`)
@@ -973,6 +998,18 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
     })()
     return () => { avbruten = true }
   }, [mejl.id])
+
+  // Citatet läggs in när svarsrutan öppnas och brödtexten finns. Bara om
+  // rutan är tom, så att ingen förlorar det den redan skrivit.
+  const svarsRuta = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (!visaSvar || !kropp || text.trim()) return
+    setText(byggCitat(mejl, kropp))
+    // Citatet skrivs in efter att rutan fått fokus, så markören måste
+    // flyttas tillbaka — annars börjar man skriva under citatet.
+    setTimeout(() => svarsRuta.current?.setSelectionRange(0, 0), 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visaSvar, kropp])
 
   const namn = mejl.from_name || mejl.from_email || '(okänd)'
 
@@ -1146,10 +1183,15 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
+              ref={svarsRuta}
               placeholder="Skriv ditt svar…"
               autoFocus
-              className="min-h-32 w-full rounded-lg border border-border bg-card px-2.5 py-2 text-sm text-ink outline-none focus:border-accent"
+              // Citatet ligger redan i rutan — markören hör hemma överst
+              onFocus={(e) => e.currentTarget.setSelectionRange(0, 0)}
+              className="min-h-40 w-full rounded-lg border border-border bg-card px-2.5 py-2 text-sm text-ink outline-none focus:border-accent"
             />
+
+            <Bifoga bilagor={bilagor} setBilagor={setBilagor} />
 
             {konton.find((k) => k.id === franKonto)?.signature?.trim() && (
               <div className="rounded-lg border border-dashed border-border px-2.5 py-1.5">
@@ -1164,16 +1206,21 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
               <p className="rounded-lg border border-bad/40 bg-bad/10 px-2.5 py-1.5 text-xs text-bad">{resultat.fel}</p>
             )}
             {resultat?.ok && (
-              <p className="rounded-lg border border-good/40 bg-good/10 px-2.5 py-1.5 text-xs text-good">✓ Skickat</p>
+              <p className="rounded-lg border border-good/40 bg-good/10 px-2.5 py-1.5 text-xs text-good">
+                ✓ Skickat{resultat.sparfel ? ' — men kopian till Skickat misslyckades: ' + resultat.sparfel : ' och sparat i Skickat'}
+              </p>
             )}
 
             <div className="flex items-center justify-between">
               <button onClick={() => setVisaSvar(false)} className="text-xs text-muted hover:text-ink">Avbryt</button>
               <button
-                disabled={skickar || !till.trim() || !text.trim()}
+                disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
                 onClick={async () => {
                   setSkickar(true); setResultat(null)
-                  const r = await onSkicka(franKonto, till.trim(), amne, text)
+                  const r = await onSkicka({
+                    fromAccountId: franKonto, to: till.trim(), subject: amne, body: text,
+                    attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
+                  })
                   setResultat(r)
                   if (r.ok) { setText(''); setTimeout(() => setVisaSvar(false), 1200) }
                   setSkickar(false)
