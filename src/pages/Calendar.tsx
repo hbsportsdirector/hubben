@@ -34,7 +34,12 @@ const UPPREPNINGAR: { id: Upprepning; namn: string }[] = [
 
 /** Bygger en upprepningsregel enligt RFC 5545. Vi tolkar den aldrig själva —
  *  Google expanderar serien och ger tillbaka de enskilda tillfällena. */
-export function byggRrule(u: Upprepning, dagar: string[], tillOchMed: string, heldag = false): string | null {
+export type Slut =
+  | { typ: 'aldrig' }
+  | { typ: 'antal'; antal: number }
+  | { typ: 'datum'; datum: string }
+
+export function byggRrule(u: Upprepning, dagar: string[], slut: Slut, heldag = false): string | null {
   if (u === 'aldrig') return null
   const delar: string[] = []
   if (u === 'dag') delar.push('FREQ=DAILY')
@@ -45,11 +50,15 @@ export function byggRrule(u: Upprepning, dagar: string[], tillOchMed: string, he
     if (u === 'varannan') delar.push('INTERVAL=2')
     if (dagar.length) delar.push('BYDAY=' + dagar.join(','))
   }
-  if (tillOchMed) {
+
+  if (slut.typ === 'antal' && slut.antal > 0) {
+    // COUNT räknar tillfällen, inklusive det första
+    delar.push('COUNT=' + Math.min(Math.round(slut.antal), 730))
+  } else if (slut.typ === 'datum' && slut.datum) {
     // UNTIL är inklusive, och måste ha SAMMA form som starttiden (RFC 5545):
     // bara datum för en heldagsserie, datum-och-tid i UTC för en tidsatt.
     // Skickar man tid på en heldagsserie kan Google avvisa hela regeln.
-    const d = tillOchMed.replace(/-/g, '')
+    const d = slut.datum.replace(/-/g, '')
     delar.push('UNTIL=' + (heldag ? d : d + 'T235900Z'))
   }
   return delar.join(';')
@@ -189,6 +198,14 @@ export default function Calendar() {
         headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey },
       })
       const json = await res.json().catch(() => ({}))
+      // Skapades en serie svarade Google med moderhändelsen, inte tillfällena.
+      // De kommer först vid en hämtning — utan den ser man bara en enda gång.
+      if (json.nyaSerier > 0) {
+        await fetch(`${supabaseUrl}/functions/v1/calendar-sync`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey },
+        }).catch(() => {})
+      }
       if (json.fel) {
         setLastFast(json.fel)
         setTimeout(() => setLastFast(null), 12000)
@@ -407,6 +424,8 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   const [krockar, setKrockar] = useState<string[]>([])
   const [upprepning, setUpprepning] = useState<Upprepning>('aldrig')
   const [veckodagar, setVeckodagar] = useState<string[]>([])
+  const [slutTyp, setSlutTyp] = useState<'aldrig' | 'antal' | 'datum'>('aldrig')
+  const [antalGanger, setAntalGanger] = useState('10')
   const [tillOchMed, setTillOchMed] = useState('')
   // Vad en ändring på ett tillfälle ur en serie ska gälla
   const [omfattning, setOmfattning] = useState<'instans' | 'serie'>('instans')
@@ -439,7 +458,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       // i Google. Här handlar det om att ändra tid, titel eller plats.
       setUpprepning('aldrig')
       setVeckodagar([])
-      setTillOchMed('')
+      setSlutTyp('aldrig'); setAntalGanger('10'); setTillOchMed('')
       setOmfattning('instans')
     } else {
       // Lämnas som null tills kalendrarna hunnit laddas — effekten nedanför
@@ -462,7 +481,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       // Veckodagen som förval är den man valt — "varje vecka" betyder
       // nästan alltid samma veckodag som händelsen ligger på
       setVeckodagar([VECKODAGAR[(start.getDay() + 6) % 7].kod])
-      setTillOchMed('')
+      setSlutTyp('aldrig'); setAntalGanger('10'); setTillOchMed('')
       setOmfattning('instans')
     }
   }, [event, open, initialStart, initialEnd])
@@ -538,7 +557,10 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       await supabase.from('hub_events').update({ ...payload, ...ko }).eq('id', event.id)
     } else {
       const userId = await getUserId()
-      const rrule = byggRrule(upprepning, veckodagar, tillOchMed, allDay)
+      const slut: Slut = slutTyp === 'antal'
+        ? { typ: 'antal', antal: Number(antalGanger) || 1 }
+        : slutTyp === 'datum' ? { typ: 'datum', datum: tillOchMed } : { typ: 'aldrig' }
+      const rrule = byggRrule(upprepning, veckodagar, slut, allDay)
       await supabase.from('hub_events').insert({
         ...payload, ...ko, rrule, calendar_id: kalenderId, user_id: userId,
       })
@@ -617,11 +639,44 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
 
             {upprepning !== 'aldrig' && (
               <div className="mt-2">
-                <Label>Till och med (valfritt)</Label>
-                <Input type="date" value={tillOchMed} onChange={(e) => setTillOchMed(e.target.value)} />
-                <p className="mt-1 text-xs text-muted">
-                  {tillOchMed ? 'Sista tillfället den dagen.' : 'Utan slutdatum fortsätter serien tills vidare.'}
-                </p>
+                <Label>Slutar</Label>
+                <div className="flex gap-2">
+                  {([
+                    { id: 'aldrig', namn: 'Aldrig' },
+                    { id: 'antal', namn: 'Efter antal' },
+                    { id: 'datum', namn: 'Ett datum' },
+                  ] as const).map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setSlutTyp(v.id)}
+                      className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+                        slutTyp === v.id ? 'bg-accent text-white' : 'border border-border text-muted hover:text-ink'
+                      }`}
+                    >
+                      {v.namn}
+                    </button>
+                  ))}
+                </div>
+
+                {slutTyp === 'antal' && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <Input
+                      value={antalGanger}
+                      onChange={(e) => setAntalGanger(e.target.value.replace(/\D/g, ''))}
+                      inputMode="numeric"
+                      className="w-20"
+                    />
+                    <span className="text-xs text-muted">gånger, inklusive det första</span>
+                  </div>
+                )}
+
+                {slutTyp === 'datum' && (
+                  <div className="mt-2">
+                    <Input type="date" value={tillOchMed} onChange={(e) => setTillOchMed(e.target.value)} />
+                    <p className="mt-1 text-xs text-muted">Sista tillfället den dagen.</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
