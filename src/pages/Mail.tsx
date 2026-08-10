@@ -130,12 +130,24 @@ export default function Mail() {
   async function anropaFunktion(namn: string, kropp: Record<string, unknown>) {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return { fel: 'Ingen session' }
-    const res = await fetch(`${supabaseUrl}/functions/v1/${namn}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify(kropp),
-    })
-    return await res.json()
+    let res: Response
+    try {
+      res = await fetch(`${supabaseUrl}/functions/v1/${namn}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(kropp),
+      })
+    } catch (e) {
+      return { fel: `Nådde inte servern: ${e instanceof Error ? e.message : e}` }
+    }
+    // Ett svar som inte är JSON — timeout, för stor kropp, gateway-fel — ska
+    // bli ett felmeddelande, inte ett kastat undantag som låser knappen.
+    const rå = await res.text()
+    try {
+      return JSON.parse(rå)
+    } catch {
+      return { fel: `Servern svarade ${res.status} utan giltigt svar${rå.trim() ? ': ' + rå.trim().slice(0, 200) : ''}` }
+    }
   }
 
   /** Betar av förhämtningskön omgång för omgång. Tyst i bakgrunden — går
@@ -912,13 +924,19 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
               disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
               onClick={async () => {
                 setSkickar(true); setResultat(null)
-                const r = await onSkicka({
-                  fromAccountId: fran, to: till.trim(), subject: amne, body: text,
-                  attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
-                })
-                if (r?.fel) setResultat({ fel: r.fel })
-                else { setResultat({ ok: true, sparfel: r?.sparfel }); setTimeout(onClose, 2000) }
-                setSkickar(false)
+                try {
+                  const r = await onSkicka({
+                    fromAccountId: fran, to: till.trim(), subject: amne, body: text,
+                    attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
+                  })
+                  if (r?.fel) setResultat({ fel: r.fel })
+                  else { setResultat({ ok: true, sparfel: r?.sparfel }); setTimeout(onClose, 2000) }
+                } catch (e) {
+                  setResultat({ fel: e instanceof Error ? e.message : String(e) })
+                } finally {
+                  // Alltid — annars står knappen kvar och säger Skickar för evigt
+                  setSkickar(false)
+                }
               }}
               className="rounded-xl bg-accent px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
             >
@@ -1217,13 +1235,18 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
                 disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
                 onClick={async () => {
                   setSkickar(true); setResultat(null)
-                  const r = await onSkicka({
-                    fromAccountId: franKonto, to: till.trim(), subject: amne, body: text,
-                    attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
-                  })
-                  setResultat(r)
-                  if (r.ok) { setText(''); setTimeout(() => setVisaSvar(false), 1200) }
-                  setSkickar(false)
+                  try {
+                    const r = await onSkicka({
+                      fromAccountId: franKonto, to: till.trim(), subject: amne, body: text,
+                      attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
+                    })
+                    setResultat(r)
+                    if (r.ok) { setText(''); setTimeout(() => setVisaSvar(false), 1200) }
+                  } catch (e) {
+                    setResultat({ fel: e instanceof Error ? e.message : String(e) })
+                  } finally {
+                    setSkickar(false)
+                  }
                 }}
                 className="rounded-xl bg-accent px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
               >
