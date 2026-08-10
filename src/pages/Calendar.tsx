@@ -34,7 +34,7 @@ const UPPREPNINGAR: { id: Upprepning; namn: string }[] = [
 
 /** Bygger en upprepningsregel enligt RFC 5545. Vi tolkar den aldrig själva —
  *  Google expanderar serien och ger tillbaka de enskilda tillfällena. */
-export function byggRrule(u: Upprepning, dagar: string[], tillOchMed: string): string | null {
+export function byggRrule(u: Upprepning, dagar: string[], tillOchMed: string, heldag = false): string | null {
   if (u === 'aldrig') return null
   const delar: string[] = []
   if (u === 'dag') delar.push('FREQ=DAILY')
@@ -45,9 +45,13 @@ export function byggRrule(u: Upprepning, dagar: string[], tillOchMed: string): s
     if (u === 'varannan') delar.push('INTERVAL=2')
     if (dagar.length) delar.push('BYDAY=' + dagar.join(','))
   }
-  // UNTIL är inklusive och måste vara i UTC. Sista sekunden på slutdagen
-  // räcker gott — annars faller sista tillfället bort.
-  if (tillOchMed) delar.push('UNTIL=' + tillOchMed.replace(/-/g, '') + 'T235900Z')
+  if (tillOchMed) {
+    // UNTIL är inklusive, och måste ha SAMMA form som starttiden (RFC 5545):
+    // bara datum för en heldagsserie, datum-och-tid i UTC för en tidsatt.
+    // Skickar man tid på en heldagsserie kan Google avvisa hela regeln.
+    const d = tillOchMed.replace(/-/g, '')
+    delar.push('UNTIL=' + (heldag ? d : d + 'T235900Z'))
+  }
   return delar.join(';')
 }
 
@@ -534,7 +538,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       await supabase.from('hub_events').update({ ...payload, ...ko }).eq('id', event.id)
     } else {
       const userId = await getUserId()
-      const rrule = byggRrule(upprepning, veckodagar, tillOchMed)
+      const rrule = byggRrule(upprepning, veckodagar, tillOchMed, allDay)
       await supabase.from('hub_events').insert({
         ...payload, ...ko, rrule, calendar_id: kalenderId, user_id: userId,
       })
