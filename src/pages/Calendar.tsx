@@ -15,6 +15,13 @@ import { Card, Button, Input, Label, Modal, Spinner, Textarea } from '../compone
 
 const EVENT_COLORS = ['#38bdf8', '#6366f1', '#34d399', '#fbbf24', '#f87171', '#e879f9']
 
+interface Kalender {
+  id: string
+  namn: string
+  color: string
+  synlig: boolean
+}
+
 interface CalEvent {
   id: string
   title: string
@@ -45,6 +52,29 @@ export default function Calendar() {
     return [addDays(startOfMonth(date), -10), addDays(endOfMonth(date), 10)]
   }, [view, date])
 
+  const [kalendrar, setKalendrar] = useState<Kalender[]>([])
+  const [visaEgna, setVisaEgna] = useState(true)
+
+  // Vad som faktiskt ritas ut. Kalendrarna vaxlas i sidhuvudet, precis som i
+  // Google - synligheten sparas sa den overlever ett sidbyte.
+  const synligaHandelser = useMemo(() => {
+    const dolda = new Set(kalendrar.filter((k) => !k.synlig).map((k) => k.id))
+    return events.filter((e) => (e.raw.calendar_id ? !dolda.has(e.raw.calendar_id) : visaEgna))
+  }, [events, kalendrar, visaEgna])
+
+  const laddaKalendrar = useCallback(async () => {
+    const { data } = await supabase
+      .from('hub_calendars')
+      .select('id, namn, color, synlig')
+      .order('namn')
+    setKalendrar((data as Kalender[]) ?? [])
+  }, [])
+
+  async function vaxlaSynlig(k: Kalender) {
+    setKalendrar((prev) => prev.map((x) => (x.id === k.id ? { ...x, synlig: !x.synlig } : x)))
+    await supabase.from('hub_calendars').update({ synlig: !k.synlig }).eq('id', k.id)
+  }
+
   const load = useCallback(async () => {
     const { data } = await supabase
       .from('hub_events')
@@ -70,6 +100,7 @@ export default function Calendar() {
   }, [from, to])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { laddaKalendrar() }, [laddaKalendrar])
   useNewParam(() => { setEditEvent(null); setSlotStart(null); setSlotEnd(null); setModal(true) })
 
   // Händelser som kommer från Google får inte ändras här förrän skrivvägen
@@ -121,6 +152,52 @@ export default function Calendar() {
         <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">{lastFast}</p>
       )}
 
+      {kalendrar.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted">Visa:</span>
+          {kalendrar.map((k) => (
+            <button
+              key={k.id}
+              onClick={() => vaxlaSynlig(k)}
+              className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs transition-colors ${
+                k.synlig
+                  ? 'border-border bg-card text-ink'
+                  : 'border-border/50 bg-transparent text-muted/60 line-through'
+              }`}
+              title={k.synlig ? 'Dölj den här kalendern' : 'Visa den här kalendern'}
+            >
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: k.synlig ? k.color : 'transparent', border: `1.5px solid ${k.color}` }}
+              />
+              {k.namn}
+            </button>
+          ))}
+          {/* Händelser skapade i Hubben hör inte till någon Google-kalender */}
+          <button
+            onClick={() => setVisaEgna((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs transition-colors ${
+              visaEgna ? 'border-border bg-card text-ink' : 'border-border/50 bg-transparent text-muted/60 line-through'
+            }`}
+          >
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-muted" style={{ background: visaEgna ? '#8b95ad' : 'transparent' }} />
+            Bara i Hubben
+          </button>
+          {kalendrar.some((k) => !k.synlig) && (
+            <button
+              onClick={async () => {
+                setKalendrar((prev) => prev.map((x) => ({ ...x, synlig: true })))
+                setVisaEgna(true)
+                await supabase.from('hub_calendars').update({ synlig: true }).eq('synlig', false)
+              }}
+              className="rounded-xl px-2 py-1 text-xs text-accent-soft hover:underline"
+            >
+              Visa alla
+            </button>
+          )}
+        </div>
+      )}
+
       <Card className="!p-4">
         {loading ? <Spinner /> : (
           <div style={{ height: '72vh', minHeight: 520 }}>
@@ -129,7 +206,7 @@ export default function Calendar() {
               culture="sv"
               messages={messages}
               formats={formats}
-              events={events}
+              events={synligaHandelser}
               view={view}
               onView={setView}
               date={date}
