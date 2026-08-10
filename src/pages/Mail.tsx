@@ -503,7 +503,33 @@ export default function Mail() {
         </div>
       </div>
 
-      <div className="flex gap-3" style={{ height: 'calc(100vh - 8.5rem)' }}>
+      {/* Sidokolumnen finns först från xl. På smalare skärmar flyttar dagens
+          schema och lådorna upp hit, så man kommer åt dem i telefonen. */}
+      <div className="space-y-2 xl:hidden">
+        <DagensSchema />
+        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
+          {LADOR.map((l) => (
+            <button
+              key={l.id}
+              onClick={() => {
+                setLada(l.id); setMappFilter(null); setValdId(null)
+                if (l.roll) synkaOhamtade(l.roll)
+              }}
+              className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] transition-colors ${
+                lada === l.id && !mappFilter
+                  ? 'border-accent bg-accent/15 font-medium text-accent-soft'
+                  : 'border-border text-muted hover:bg-card-hover hover:text-ink'
+              }`}
+            >
+              <span aria-hidden>{l.ikon}</span>
+              {l.namn}
+              {antal[l.id] > 0 && <span className="text-[11px] font-semibold">{antal[l.id]}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex h-[calc(100dvh-19rem)] gap-3 sm:h-[calc(100dvh-17rem)] xl:h-[calc(100vh-8.5rem)]">
         {/* Lådor, konton och mappar */}
         <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-3 xl:flex">
           <DagensSchema />
@@ -616,8 +642,12 @@ export default function Mail() {
           </div>
         </aside>
 
-        {/* Lista */}
-        <div className="flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-border bg-card lg:w-88 xl:w-96">
+        {/* Lista. Ryms bara en kolumn åt gången lämnar listan plats åt
+            läsrutan när man öppnat ett mejl — som i vilken telefonklient
+            som helst. */}
+        <div className={`w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-border bg-card lg:flex lg:w-88 xl:w-96 ${
+          vald ? 'hidden' : 'flex'
+        }`}>
           {/* Åtgärdsrad när något är markerat */}
           {valda.size > 0 && (
             <div className="relative flex flex-wrap items-center gap-1 border-b border-border bg-accent/10 px-2 py-2">
@@ -713,7 +743,7 @@ export default function Mail() {
               })
             )}
           </div>
-          <p className="border-t border-border px-3 py-2 text-[10px] text-muted">
+          <p className="hidden border-t border-border px-3 py-2 text-[10px] text-muted lg:block">
             <kbd className="rounded border border-border bg-surface px-1">J</kbd>/<kbd className="rounded border border-border bg-surface px-1">K</kbd> bläddra ·
             <kbd className="ml-1 rounded border border-border bg-surface px-1">L</kbd> svara senare ·
             <kbd className="ml-1 rounded border border-border bg-surface px-1">Z</kbd> skjut upp ·
@@ -722,9 +752,12 @@ export default function Mail() {
         </div>
 
         {/* Läsruta */}
-        <div className="hidden min-w-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card lg:block">
+        <div className={`min-w-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card lg:block ${
+          vald ? 'block' : 'hidden'
+        }`}>
           {vald ? (
             <Lasruta
+              onTillbaka={() => setValdId(null)}
               mejl={vald}
               konto={kontoAv(vald.account_id)}
               mappar={mappar.filter((m) => m.id !== vald.folder_id)}
@@ -1070,7 +1103,8 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
   )
 }
 
-function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onRadera, onSkicka, onSvaraSenare, onStjarna }: {
+function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onRadera, onSkicka, onSvaraSenare, onStjarna, onTillbaka }: {
+  onTillbaka?: () => void
   mejl: Mejl
   konto?: Konto
   mappar: Mapp[]
@@ -1156,6 +1190,16 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   return (
     <div className="flex h-full flex-col">
       <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-3 py-2">
+        {/* På telefonen har läsrutan tagit listans plats — den här tar en tillbaka */}
+        {onTillbaka && (
+          <button
+            onClick={onTillbaka}
+            className="mr-1 flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-card-hover hover:text-ink lg:hidden"
+          >
+            <span aria-hidden>←</span>
+            Listan
+          </button>
+        )}
         <Verktyg ikon="✏️" text="Svara" aktiv={visaSvar} onClick={() => setVisaSvar(!visaSvar)} />
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
         <Verktyg ikon="📁" text={flyttar ? 'Flyttar…' : 'Flytta till…'} aktiv={visaFlytt} onClick={() => { if (!flyttar) { setVisaFlytt(!visaFlytt); setFlyttSok('') } }} />

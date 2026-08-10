@@ -41,3 +41,31 @@ input[type="time"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   filter: invert(0.7);
 }
+
+/* Tryckytor på pekskärm.
+ *
+ * En muspekare träffar en knapp på 20 px. Ett finger gör det inte — mätningen
+ * på 375 px visade att nästan varje knapp i appen låg under 32. I stället för
+ * att skriva om varje enskild knapp sätts golvet här, och de rutnät som ska
+ * vara täta (vaneheatmapen, färgprickarna) markeras med data-tat.
+ *
+ * Bara min-height: knappar i flexrader växer på höjden utan att bryta
+ * ombrytningen, medan bredden får bestämmas av innehållet som förut. */
+@media (pointer: coarse) {
+  main button:not([data-tat] *):not([data-tat]),
+  main a[href]:not([data-tat] *):not([data-tat]),
+  main select,
+  main input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+    min-height: 2.5rem;
+  }
+
+  main input[type="checkbox"]:not([data-tat] *),
+  main input[type="radio"]:not([data-tat] *) {
+    min-width: 1.15rem;
+    min-height: 1.15rem;
+  }
+
+  /* Läsrutans verktygsrad och mejllistan har egen täthet — de radbryts
+     redan och skulle bli orimligt höga med golvet påslaget. */
+  main [data-tat] button { min-height: 0; }
+}

@@ -8,3 +8,5 @@ dist
 
 # pdf.js-resurser kopieras ur node_modules vid bygget
 public/pdfjs/
+# appikonerna ritas av scripts/rita-appikon.mjs vid bygget
+public/ikoner/

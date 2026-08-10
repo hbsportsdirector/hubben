@@ -115,7 +115,13 @@ const DnDCalendar = withDragAndDrop<CalEvent>(BigCalendar<CalEvent>)
 export default function Calendar() {
   const [events, setEvents] = useState<CalEvent[]>([])
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState<View>(Views.MONTH)
+  // En månadsruta blir 43 px bred på en telefon — där ryms varken tid eller
+  // titel. Agendan är en lista och säger samma sak utan att kläma ihop den.
+  const [view, setView] = useState<View>(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+      ? Views.AGENDA
+      : Views.MONTH,
+  )
   const [date, setDate] = useState(new Date())
   const [modal, setModal] = useState(false)
   const [editEvent, setEditEvent] = useState<HubEvent | null>(null)
@@ -411,7 +417,7 @@ function SwedishToolbar({ label, onNavigate, onView, view, date }: ToolbarProps<
           <button
             key={v.key}
             onClick={() => onView(v.key)}
-            className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
+            className={`min-h-11 rounded-lg px-3.5 text-xs font-medium transition-colors sm:min-h-0 sm:py-1 ${
               view === v.key ? 'bg-accent/20 text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
             }`}
           >
