@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useRoll } from '../lib/roll'
 import CommandPalette from './CommandPalette'
 
 const navItems = [
@@ -20,17 +21,37 @@ const navItems = [
 // hittar man aldrig. De fyra man faktiskt öppnar varje dag ligger framme,
 // resten en tryckning bort.
 const SNABBVAL = ['/', '/mejl', '/kalender', '/uppgifter']
-const iSnabbraden = navItems.filter((i) => SNABBVAL.includes(i.to))
-const iMerluckan = navItems.filter((i) => !SNABBVAL.includes(i.to))
+
+// En assistent har bara fått mejlen, kalendern och uppgifterna. Att visa
+// menyval som ändå bara ger en tom sida är sämre än att låta bli.
+const FOR_DELEGAT = ['/mejl', '/kalender', '/uppgifter']
 
 export default function Layout({ userEmail, children }: { userEmail: string; children: ReactNode }) {
   const plats = useLocation()
   // Mejlvyn behöver hela bredden för lista + läsruta
   const bred = plats.pathname.startsWith('/mejl')
   const [merOppen, setMerOppen] = useState(false)
+  const { arDelegat } = useRoll()
+
+  const synliga = useMemo(
+    () => (arDelegat ? navItems.filter((i) => FOR_DELEGAT.includes(i.to)) : navItems),
+    [arDelegat],
+  )
+  const iSnabbraden = useMemo(() => synliga.filter((i) => SNABBVAL.includes(i.to)), [synliga])
+  const iMerluckan = useMemo(() => synliga.filter((i) => !SNABBVAL.includes(i.to)), [synliga])
 
   // Luckan ska inte stå kvar öppen ovanpå sidan man just valde
   useEffect(() => { setMerOppen(false) }, [plats.pathname])
+
+  // Översikten och Inställningar hör ägaren till. Skickar en assistent som
+  // hamnat där vidare till inkorgen i stället för att visa en tom sida.
+  const navigera = useNavigate()
+  useEffect(() => {
+    if (!arDelegat) return
+    if (plats.pathname === '/' || plats.pathname.startsWith('/installningar')) {
+      navigera('/mejl', { replace: true })
+    }
+  }, [arDelegat, plats.pathname, navigera])
 
   return (
     <div className="flex min-h-screen">
@@ -45,7 +66,7 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
           {!bred && <span className="text-xl font-bold tracking-tight">Hubben</span>}
         </div>
         <nav className={`flex-1 space-y-1 ${bred ? 'px-2' : 'px-3'}`}>
-          {navItems.map((item) => (
+          {synliga.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -63,7 +84,7 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
           ))}
         </nav>
         <div className={`border-t border-border py-4 ${bred ? 'px-2' : 'px-4'}`}>
-          <NavLink
+          {!arDelegat && <NavLink
             to="/installningar"
             title={bred ? 'Inställningar' : undefined}
             className={({ isActive }) =>
@@ -74,7 +95,7 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
           >
             <span aria-hidden>⚙️</span>
             {!bred && 'Inställningar'}
-          </NavLink>
+          </NavLink>}
           {!bred && (
             <>
               <p className="mb-2 text-[10px] text-muted/70">Tips: <kbd className="rounded border border-border bg-surface px-1">Ctrl</kbd>+<kbd className="rounded border border-border bg-surface px-1">K</kbd> öppnar kommandopaletten</p>
@@ -133,17 +154,19 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
                   {item.label}
                 </NavLink>
               ))}
-              <NavLink
-                to="/installningar"
-                className={({ isActive }) =>
-                  `flex min-h-[4.5rem] flex-col items-center justify-center gap-1.5 rounded-2xl px-2 py-3 text-center text-[11px] leading-tight ${
-                    isActive ? 'bg-accent/15 text-accent-soft' : 'text-muted active:bg-card-hover'
-                  }`
-                }
-              >
-                <span className="text-xl" aria-hidden>⚙️</span>
-                Inställningar
-              </NavLink>
+              {!arDelegat && (
+                <NavLink
+                  to="/installningar"
+                  className={({ isActive }) =>
+                    `flex min-h-[4.5rem] flex-col items-center justify-center gap-1.5 rounded-2xl px-2 py-3 text-center text-[11px] leading-tight ${
+                      isActive ? 'bg-accent/15 text-accent-soft' : 'text-muted active:bg-card-hover'
+                    }`
+                  }
+                >
+                  <span className="text-xl" aria-hidden>⚙️</span>
+                  Inställningar
+                </NavLink>
+              )}
             </div>
             <p className="mt-3 px-5 text-[11px] text-muted/70">{userEmail}</p>
           </div>
@@ -167,7 +190,7 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
             {item.label.split(' ')[0]}
           </NavLink>
         ))}
-        <button
+        {(iMerluckan.length > 0 || !arDelegat) && <button
           onClick={() => setMerOppen((v) => !v)}
           aria-expanded={merOppen}
           className={`flex min-h-[3.25rem] flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] ${
@@ -177,7 +200,7 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
         >
           <span className="text-lg" aria-hidden>{merOppen ? '✕' : '⋯'}</span>
           Mer
-        </button>
+        </button>}
       </nav>
 
       <CommandPalette />
