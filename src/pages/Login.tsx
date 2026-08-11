@@ -3,14 +3,8 @@ import type { FormEvent } from 'react'
 import { supabase, HUB_EMAIL } from '../lib/supabase'
 import { Button, Input, Label } from '../components/ui'
 
-const MINNS_EPOST = 'hubben.assistentadress'
-
 export default function Login() {
   const [password, setPassword] = useState('')
-  // Hubben har en ägare, och han slipper skriva sin adress varje gång. En
-  // assistent har en egen inloggning och behöver fältet — därav luckan.
-  const [egenAdress, setEgenAdress] = useState(() => !!localStorage.getItem(MINNS_EPOST))
-  const [epost, setEpost] = useState(() => localStorage.getItem(MINNS_EPOST) ?? '')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -19,15 +13,8 @@ export default function Login() {
     setError(null)
     setBusy(true)
     try {
-      const adress = egenAdress ? epost.trim().toLowerCase() : HUB_EMAIL
-      const { error } = await supabase.auth.signInWithPassword({ email: adress, password })
-      if (error) {
-        setError(translateError(error.message))
-        return
-      }
-      // Nästa gång slipper hon leta rätt på luckan igen
-      if (egenAdress) localStorage.setItem(MINNS_EPOST, adress)
-      else localStorage.removeItem(MINNS_EPOST)
+      const { error } = await supabase.auth.signInWithPassword({ email: HUB_EMAIL, password })
+      if (error) setError(translateError(error.message))
     } finally {
       setBusy(false)
     }
@@ -42,20 +29,6 @@ export default function Login() {
           <p className="mt-2 text-sm text-muted">Din digitala hub för livet</p>
         </div>
         <form onSubmit={handleSubmit} className="rounded-2xl border border-border bg-card p-6 shadow-2xl">
-          {egenAdress && (
-            <div className="mb-4">
-              <Label>Mejladress</Label>
-              <Input
-                type="email"
-                required
-                value={epost}
-                onChange={(e) => setEpost(e.target.value)}
-                placeholder="namn@exempel.se"
-                autoComplete="username"
-                autoFocus
-              />
-            </div>
-          )}
           <div className="mb-5">
             <Label>Lösenord</Label>
             <Input
@@ -65,20 +38,13 @@ export default function Login() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
               autoComplete="current-password"
-              autoFocus={!egenAdress}
+              autoFocus
             />
           </div>
           {error && <p className="mb-4 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</p>}
           <Button type="submit" disabled={busy} className="w-full">
             {busy ? 'Vänta…' : 'Logga in'}
           </Button>
-          <button
-            type="button"
-            onClick={() => { setEgenAdress((v) => !v); setError(null) }}
-            className="mt-4 w-full text-center text-xs text-muted transition-colors hover:text-ink"
-          >
-            {egenAdress ? 'Det är min hub' : 'Jag är assistent'}
-          </button>
         </form>
       </div>
     </div>
@@ -86,7 +52,7 @@ export default function Login() {
 }
 
 function translateError(msg: string): string {
-  if (msg.includes('Invalid login credentials')) return 'Fel adress eller lösenord.'
+  if (msg.includes('Invalid login credentials')) return 'Fel lösenord.'
   if (msg.includes('Email not confirmed')) return 'Kontot är inte bekräftat än.'
   return msg
 }

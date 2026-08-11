@@ -5,7 +5,6 @@ import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import type { HubMailAccount } from '../lib/types'
 import { Card, SectionTitle, Button, Input, Label, Spinner, Textarea } from '../components/ui'
 import { GoogleKalender } from '../components/GoogleKalender'
-import Assistent from '../components/Assistent'
 
 interface Testsvar {
   // Från imap-test
@@ -104,10 +103,6 @@ export default function Settings() {
       </div>
 
       <GoogleKalender />
-
-      <Card>
-        <Assistent />
-      </Card>
 
       <Card className="border-accent/30 bg-accent/5">
         <div className="flex gap-3">

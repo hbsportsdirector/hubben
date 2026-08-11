@@ -120,13 +120,16 @@ export default function MarketWidgets() {
             + {s.label}
           </button>
         ))}
-        <div className="flex items-center gap-2">
+        {/* Fältet var låst till 208 px, och tillsammans med knappen blev
+            gruppen bredare än en 360 px-skärm har att ge — då fick hela sidan
+            en sidledsscroll. Nu krymper det i stället. */}
+        <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto">
           <Input
             value={symbolInput}
             onChange={(e) => setSymbolInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && add(symbolInput)}
             placeholder="Yahoo-symbol, t.ex. ERIC-B.ST"
-            className="!w-52 !py-1.5 text-xs"
+            className="!w-full !min-w-0 !py-1.5 text-xs sm:!w-52"
           />
           <Button variant="ghost" onClick={() => add(symbolInput)} disabled={adding || !symbolInput.trim()} className="!px-3 !py-1.5 text-xs">
             Lägg till
@@ -170,7 +173,14 @@ function QuoteCard({ stock, quote, onRemove }: { stock: HubStock; quote?: Market
               {up ? '▲' : '▼'} {new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 2, signDisplay: 'always' }).format(change)} %
             </p>
           )}
-          {quote?.spark && quote.spark.length > 1 && <Sparkline data={quote.spark} color={changeColor} />}
+          {quote?.spark && quote.spark.length > 1 ? (
+            <Sparkline data={quote.spark} color={changeColor} />
+          ) : (
+            // Vissa noteringar har ett pris men ingen historik hos Yahoo — små
+            // börshandlade produkter särskilt. Att bara utelämna kurvan ser ut
+            // som ett fel i appen, så kortet säger det i stället.
+            <p className="mt-1.5 text-[10px] text-muted/70">Ingen kurshistorik för {stock.symbol}</p>
+          )}
         </>
       )}
     </div>
