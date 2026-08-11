@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { sv } from 'date-fns/locale'
+import { Link } from 'react-router-dom'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { Spinner, EmptyState } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
@@ -16,13 +17,14 @@ import { MejlTillHubben, DagensSchema } from '../components/MejlTillHubben'
  *  Skickat och Papperskorgen är inte triage-lådor utan mappar, men de hör
  *  hemma här ändå: de har en roll som alla konton delar, så lådan kan samla
  *  ihop dem i stället för att man ska leta upp varje kontos mapp för sig. */
-type Lada = 'imbox' | 'reply_later' | 'sent' | 'trash'
+type Lada = 'imbox' | 'gallring' | 'reply_later' | 'sent' | 'trash'
 
 const LADOR: { id: Lada; namn: string; ikon: string; tangent: string; roll?: string }[] = [
   { id: 'imbox', namn: 'Inkorg', ikon: '📥', tangent: '1' },
-  { id: 'reply_later', namn: 'Svara senare', ikon: '↩️', tangent: '2' },
-  { id: 'sent', namn: 'Skickat', ikon: '📤', tangent: '3', roll: 'sent' },
-  { id: 'trash', namn: 'Papperskorgen', ikon: '🗑', tangent: '4', roll: 'trash' },
+  { id: 'gallring', namn: 'Gallring', ikon: '🚦', tangent: '2' },
+  { id: 'reply_later', namn: 'Svara senare', ikon: '↩️', tangent: '3' },
+  { id: 'sent', namn: 'Skickat', ikon: '📤', tangent: '4', roll: 'sent' },
+  { id: 'trash', namn: 'Papperskorgen', ikon: '🗑', tangent: '5', roll: 'trash' },
 ]
 
 /** Mappar som inte är mappar. Gmail visar sina systemvyer som IMAP-mappar,
@@ -228,12 +230,20 @@ export default function Mail() {
 
   const laddaAntal = useCallback(async () => {
     // Samma vy som listan — en definition av var ett mejl hör hemma
-    const [imbox, senare] = await Promise.all([
+    const [imbox, senare, oavgjorda] = await Promise.all([
       supabase.from('hub_mejl').select('*', { count: 'exact', head: true })
-        .eq('seen', false).eq('reply_later', false).eq('visad_roll', 'inbox'),
+        .eq('seen', false).eq('reply_later', false).eq('visad_roll', 'inbox').eq('avsandarbeslut', 'in'),
       supabase.from('hub_mejl').select('*', { count: 'exact', head: true }).eq('reply_later', true),
+      // Gallringen räknar alla, inte bara olästa — poängen är hur mycket som
+      // väntar på ett beslut, inte hur mycket du hunnit titta på
+      supabase.from('hub_mejl').select('*', { count: 'exact', head: true })
+        .eq('visad_roll', 'inbox').eq('avsandarbeslut', 'oavgjord'),
     ])
-    setAntal({ imbox: imbox.count ?? 0, reply_later: senare.count ?? 0 })
+    setAntal({
+      imbox: imbox.count ?? 0,
+      reply_later: senare.count ?? 0,
+      gallring: oavgjorda.count ?? 0,
+    })
   }, [])
 
   /** Mapplistan ska visa mappar man faktiskt navigerar till. Bort med Gmails
@@ -268,9 +278,14 @@ export default function Mail() {
       // Skickat och Papperskorgen: alla kontons mappar med den rollen
       q = q.eq('visad_roll', rollLada)
     } else if (lada === 'reply_later') q = q.eq('reply_later', true)
-    else {
-      // Inkorgen är allt som ligger i en inkorgsmapp och inte väntar på svar
-      q = q.eq('reply_later', false).eq('visad_roll', 'inbox')
+    else if (lada === 'gallring') {
+      // Avsändare du aldrig tagit ställning till. De ska inte tränga sig in
+      // i inkorgen förrän du sagt ja.
+      q = q.eq('visad_roll', 'inbox').eq('avsandarbeslut', 'oavgjord')
+    } else {
+      // Inkorgen är allt som ligger i en inkorgsmapp, inte väntar på svar,
+      // och kommer från någon du släppt in
+      q = q.eq('reply_later', false).eq('visad_roll', 'inbox').eq('avsandarbeslut', 'in')
     }
     if (kontoFilter !== 'alla') q = q.eq('account_id', kontoFilter)
     if (sok.trim()) q = q.or(`subject.ilike.%${sok.trim()}%,from_name.ilike.%${sok.trim()}%,from_email.ilike.%${sok.trim()}%`)
@@ -501,6 +516,16 @@ export default function Mail() {
             className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-ink outline-none transition-colors placeholder:text-muted/60 focus:border-accent"
           />
         </div>
+
+        {antal.gallring > 0 && (
+          <Link
+            to="/gallring"
+            className="flex items-center gap-1.5 rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-sm font-medium text-warn transition-colors hover:bg-warn/20"
+          >
+            🚦 Städa avsändare
+            <span className="rounded-full bg-warn/20 px-1.5 text-xs">{antal.gallring}</span>
+          </Link>
+        )}
       </div>
 
       {/* Sidokolumnen finns först från xl. På smalare skärmar flyttar dagens

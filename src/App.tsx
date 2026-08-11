@@ -16,6 +16,7 @@ import Training from './pages/Training'
 import WeeklyReview from './pages/WeeklyReview'
 import Settings from './pages/Settings'
 import Mail from './pages/Mail'
+import Gallring from './pages/Gallring'
 import { Spinner } from './components/ui'
 
 export default function App() {
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="/vecka" element={<WeeklyReview />} />
         <Route path="/installningar" element={<Settings />} />
         <Route path="/mejl" element={<Mail />} />
+        <Route path="/gallring" element={<Gallring />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
