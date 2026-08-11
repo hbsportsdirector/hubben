@@ -7,6 +7,23 @@ import { Spinner, EmptyState } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
 import { MejlTillHubben, DagensSchema } from '../components/MejlTillHubben'
 
+/** Bygger en tsquery av det man skrivit i sökrutan.
+ *
+ *  Varje ord får `:*`, och det är inte en detalj — svenskan sätter ihop ord.
+ *  Stammaren lämnar "träningslägret" som det är i texten men gör
+ *  "träningsläg" av sökordet "träningsläger", så utan prefixmatchning möts de
+ *  aldrig. Allt som kan tolkas som operator (& | ! parenteser) plockas bort;
+ *  annars blir en frustrerad sökning på "!!!" ett databasfel. */
+function sokTermer(rå: string): string[] {
+  return rå
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s@._-]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((ord) => `${ord}:*`)
+}
+
 /** Lådorna spänner över alla konton.
  *
  *  Flödet och Kvitton fanns här förut, från HEY-modellen. De togs bort
@@ -269,8 +286,12 @@ export default function Mail() {
       .order('sent_at', { ascending: false })
       .limit(200)
 
+    const fraga = sok.trim()
     const rollLada = LADOR.find((l) => l.id === lada)?.roll
-    if (mappFilter) {
+    if (fraga) {
+      // En sökning ska hitta mejlet, inte lådan man råkar stå i. Kontofiltret
+      // får däremot vara kvar — det är ett medvetet val man gjort.
+    } else if (mappFilter) {
       // En vald mapp är ett eget urval. Lades lådans filter ovanpå blev
       // papperskorgen alltid tom, eftersom lådorna bara visar inkorgsmappar.
       q = q.eq('visad_mapp_id', mappFilter)
@@ -288,7 +309,20 @@ export default function Mail() {
       q = q.eq('reply_later', false).eq('visad_roll', 'inbox').eq('avsandarbeslut', 'in')
     }
     if (kontoFilter !== 'alla') q = q.eq('account_id', kontoFilter)
-    if (sok.trim()) q = q.or(`subject.ilike.%${sok.trim()}%,from_name.ilike.%${sok.trim()}%,from_email.ilike.%${sok.trim()}%`)
+
+    if (fraga) {
+      const termer = sokTermer(fraga)
+      if (termer.length === 1) {
+        // Ett ord: fritextträffen kompletteras med delsträngsökning på ämne
+        // och avsändare, så "hus" hittar "Åhus" och halva adresser funkar.
+        q = q.or(
+          `sok.fts(swedish).${termer[0]},` +
+          `subject.ilike.*${fraga}*,from_name.ilike.*${fraga}*,from_email.ilike.*${fraga}*`,
+        )
+      } else if (termer.length > 1) {
+        q = q.textSearch('sok', termer.join(' & '), { config: 'swedish' })
+      }
+    }
 
     const { data } = await q
     // Listan byts ut på plats — ingen spinner, inget hopp
@@ -512,7 +546,7 @@ export default function Mail() {
           <input
             value={sok}
             onChange={(e) => setSok(e.target.value)}
-            placeholder="Sök i alla konton…"
+            placeholder="Sök i ämne, avsändare och innehåll…"
             className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-ink outline-none transition-colors placeholder:text-muted/60 focus:border-accent"
           />
         </div>
