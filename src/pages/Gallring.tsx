@@ -95,11 +95,14 @@ export default function Gallring() {
     if (!medMapp.length) return
 
     for (const konto of medMapp) {
+      // Det som vill ha betalt flyttas aldrig undan, hur bortgallrad
+      // avsändaren än är. En faktura får inte tystas av ett domänbeslut.
       let q = supabase
         .from('hub_mejl')
         .select('id, from_email')
         .eq('account_id', konto.id)
         .eq('visad_roll', 'inbox')
+        .eq('betalning', false)
       if (nyckel.epost) q = q.eq('from_email', nyckel.epost)
       const { data } = await q
       const ids = (data ?? [])

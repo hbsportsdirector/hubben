@@ -34,14 +34,15 @@ function sokTermer(rå: string): string[] {
  *  Skickat och Papperskorgen är inte triage-lådor utan mappar, men de hör
  *  hemma här ändå: de har en roll som alla konton delar, så lådan kan samla
  *  ihop dem i stället för att man ska leta upp varje kontos mapp för sig. */
-type Lada = 'imbox' | 'gallring' | 'reply_later' | 'sent' | 'trash'
+type Lada = 'imbox' | 'betala' | 'gallring' | 'reply_later' | 'sent' | 'trash'
 
 const LADOR: { id: Lada; namn: string; ikon: string; tangent: string; roll?: string }[] = [
   { id: 'imbox', namn: 'Inkorg', ikon: '📥', tangent: '1' },
-  { id: 'gallring', namn: 'Gallring', ikon: '🚦', tangent: '2' },
-  { id: 'reply_later', namn: 'Svara senare', ikon: '↩️', tangent: '3' },
-  { id: 'sent', namn: 'Skickat', ikon: '📤', tangent: '4', roll: 'sent' },
-  { id: 'trash', namn: 'Papperskorgen', ikon: '🗑', tangent: '5', roll: 'trash' },
+  { id: 'betala', namn: 'Att betala', ikon: '💳', tangent: '2' },
+  { id: 'gallring', namn: 'Gallring', ikon: '🚦', tangent: '3' },
+  { id: 'reply_later', namn: 'Svara senare', ikon: '↩️', tangent: '4' },
+  { id: 'sent', namn: 'Skickat', ikon: '📤', tangent: '5', roll: 'sent' },
+  { id: 'trash', namn: 'Papperskorgen', ikon: '🗑', tangent: '6', roll: 'trash' },
 ]
 
 /** Mappar som inte är mappar. Gmail visar sina systemvyer som IMAP-mappar,
@@ -247,19 +248,23 @@ export default function Mail() {
 
   const laddaAntal = useCallback(async () => {
     // Samma vy som listan — en definition av var ett mejl hör hemma
-    const [imbox, senare, oavgjorda] = await Promise.all([
+    const [imbox, senare, oavgjorda, betala] = await Promise.all([
       supabase.from('hub_mejl').select('*', { count: 'exact', head: true })
-        .eq('seen', false).eq('reply_later', false).eq('visad_roll', 'inbox').eq('avsandarbeslut', 'in'),
+        .eq('seen', false).eq('reply_later', false).eq('visad_roll', 'inbox')
+        .or('avsandarbeslut.eq.in,betalning.is.true'),
       supabase.from('hub_mejl').select('*', { count: 'exact', head: true }).eq('reply_later', true),
       // Gallringen räknar alla, inte bara olästa — poängen är hur mycket som
       // väntar på ett beslut, inte hur mycket du hunnit titta på
       supabase.from('hub_mejl').select('*', { count: 'exact', head: true })
-        .eq('visad_roll', 'inbox').eq('avsandarbeslut', 'oavgjord'),
+        .eq('visad_roll', 'inbox').eq('avsandarbeslut', 'oavgjord').eq('betalning', false),
+      supabase.from('hub_mejl').select('*', { count: 'exact', head: true })
+        .eq('visad_roll', 'inbox').eq('betalning', true),
     ])
     setAntal({
       imbox: imbox.count ?? 0,
       reply_later: senare.count ?? 0,
       gallring: oavgjorda.count ?? 0,
+      betala: betala.count ?? 0,
     })
   }, [])
 
@@ -299,14 +304,19 @@ export default function Mail() {
       // Skickat och Papperskorgen: alla kontons mappar med den rollen
       q = q.eq('visad_roll', rollLada)
     } else if (lada === 'reply_later') q = q.eq('reply_later', true)
-    else if (lada === 'gallring') {
-      // Avsändare du aldrig tagit ställning till. De ska inte tränga sig in
-      // i inkorgen förrän du sagt ja.
-      q = q.eq('visad_roll', 'inbox').eq('avsandarbeslut', 'oavgjord')
+    else if (lada === 'betala') {
+      q = q.eq('visad_roll', 'inbox').eq('betalning', true)
+    } else if (lada === 'gallring') {
+      // Avsändare du aldrig tagit ställning till. Det som vill ha betalt är
+      // redan förbi gallringen och ska inte ligga kvar här också.
+      q = q.eq('visad_roll', 'inbox').eq('avsandarbeslut', 'oavgjord').eq('betalning', false)
     } else {
-      // Inkorgen är allt som ligger i en inkorgsmapp, inte väntar på svar,
-      // och kommer från någon du släppt in
-      q = q.eq('reply_later', false).eq('visad_roll', 'inbox').eq('avsandarbeslut', 'in')
+      // Inkorgen är allt som ligger i en inkorgsmapp och inte väntar på svar
+      // — från någon du släppt in, ELLER något som vill ha betalt. Det andra
+      // ledet är skyddsnätet: en faktura från en okänd avsändare ska aldrig
+      // tystas av gallringen.
+      q = q.eq('reply_later', false).eq('visad_roll', 'inbox')
+        .or('avsandarbeslut.eq.in,betalning.is.true')
     }
     if (kontoFilter !== 'alla') q = q.eq('account_id', kontoFilter)
 
