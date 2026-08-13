@@ -968,8 +968,12 @@ export default function Mail() {
                       onChange={() => { /* hanteras i onClick för att fånga shift */ }}
                       onClick={(e) => { e.stopPropagation(); vaxlaVald(index, e.shiftKey) }}
                       aria-label={`Markera mejl från ${namn}`}
+                      // En pekskärm har ingen hover. Doldes rutan tills man
+                      // hovrade gick mejl inte att markera alls i telefonen —
+                      // funktionen fanns, men var oåtkomlig. Den syns därför
+                      // alltid under lg, och först vid hover på datorn.
                       className={`mt-3 h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--color-accent) transition-opacity ${
-                        valda.size > 0 ? 'opacity-100' : 'opacity-0 group-hover/rad:opacity-100'
+                        valda.size > 0 ? 'opacity-100' : 'opacity-100 lg:opacity-0 lg:group-hover/rad:opacity-100'
                       }`}
                     />
                   <button

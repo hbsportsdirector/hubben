@@ -342,6 +342,16 @@ export default function Calendar() {
         </div>
       )}
 
+      {/* En tom kalender och en helt dold kalender ser exakt likadana ut. Utan
+          det här beskedet ser det ut som att händelserna är borta — och man
+          börjar leta efter dem i Google i stället för i filterraden ovanför. */}
+      {events.length > 0 && synligaHandelser.length === 0 && (
+        <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+          Alla kalendrar är dolda just nu, så inget ritas ut — {events.length} händelser finns kvar.
+          Tryck <strong>Visa alla</strong> här ovanför.
+        </p>
+      )}
+
       <Card className="!p-4">
         {loading ? <Spinner /> : (
           <div style={{ height: '72vh', minHeight: 520 }}>

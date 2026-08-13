@@ -45,6 +45,26 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   filter: invert(0.7);
 }
 
+/* DÄRFÖR ligger marginalerna fel när du kommer in i appen.
+ *
+ * iOS Safari zoomar in HELA sidan så fort man fokuserar ett formulärfält vars
+ * text är mindre än 16 px — och zoomar aldrig tillbaka igen. Lösenordsfältet
+ * på inloggningssidan är 14 px (text-sm). Du trycker i det, telefonen zoomar,
+ * du loggar in, och appen ritas ut i en sida som redan är inzoomad. Därav
+ * "marginalerna ligger fel" och pincha-ut varje gång.
+ *
+ * Viewport-taggen kan inte rädda det här — golvet måste sitta på själva
+ * kontrollen. !important behövs för att en klass (text-sm) alltid vinner över
+ * en elementväljare, oavsett ordning i filen. Gäller bara pekskärm, så
+ * täta fält på datorn ser ut som förut. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Tryckytor på pekskärm.
  *
  * En muspekare träffar en knapp på 20 px. Ett finger gör det inte — mätningen
