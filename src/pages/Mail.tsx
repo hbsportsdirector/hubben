@@ -142,6 +142,29 @@ function byggCitat(m: Mejl, kropp: { text_body: string | null; html_body: string
   return `\n\nDen ${nar} skrev ${vem}:\n${citerat}`
 }
 
+/** Vidarebefordran återger originalet med sina rubriker i stället för att
+ *  citera det med `>`. Mottagaren har inte sett mejlet förut och behöver veta
+ *  vem det kom från och när — det gör citatstreck till fel form. */
+function byggVidare(m: Mejl, kropp: { text_body: string | null; html_body: string | null }) {
+  const raa = kropp.text_body?.trim() || (kropp.html_body ?? '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  const text = stada(raa).slice(0, 20000)
+  const nar = m.sent_at ? format(parseISO(m.sent_at), "d MMMM yyyy 'kl.' HH:mm", { locale: sv }) : ''
+  const vem = m.from_name ? `${m.from_name} <${m.from_email ?? ''}>` : (m.from_email ?? 'okänd avsändare')
+  const till = (m.to_emails ?? []).filter(Boolean).join(', ')
+  const rubriker = [
+    `Från: ${vem}`,
+    nar && `Datum: ${nar}`,
+    `Ämne: ${m.subject || '(inget ämne)'}`,
+    till && `Till: ${till}`,
+  ].filter(Boolean).join('\n')
+  return `\n\n---------- Vidarebefordrat meddelande ----------\n${rubriker}\n\n${text}`
+}
+
 function visaTid(iso: string | null) {
   if (!iso) return ''
   const d = parseISO(iso)
@@ -267,6 +290,15 @@ export default function Mail() {
       betala: betala.count ?? 0,
     })
   }, [])
+
+    /** Djupet i mapphierarkin.
+   *
+   *  IMAP-servrar använder olika avgränsare — one.com har punkt, Gmail
+   *  snedstreck — så båda räknas. INBOX-prefixet är ingen egen nivå, det är
+   *  bara var mapparna råkar bo, så det plockas bort först. Annars hamnar
+   *  hela Täby-trädet ett steg in i onödan. */
+  const mappdjup = (path: string) =>
+    (path.replace(/^INBOX[./]/, '').replace(/^\[Gmail\][./]/, '').match(/[./]/g) ?? []).length
 
   /** Mapplistan ska visa mappar man faktiskt navigerar till. Bort med Gmails
    *  vy-mappar, och bort med dem som redan har en egen låda — annars är
@@ -691,10 +723,16 @@ export default function Mail() {
                           }
                         }}
                         title={m.path}
-                        className={`flex w-full items-center gap-2 rounded-lg py-1 pl-4 pr-2 text-left text-[12px] transition-colors ${
+                        style={{ paddingLeft: `${0.5 + mappdjup(m.path) * 0.85}rem` }}
+                        className={`flex w-full items-center gap-2 rounded-lg py-1 pr-2 text-left text-[12px] transition-colors ${
                           mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
                         }`}
                       >
+                        {/* Undermappar får ett streck i stället för bara luft,
+                            annars är det svårt att se var en nivå börjar */}
+                        {mappdjup(m.path) > 0 && (
+                          <span className="shrink-0 text-muted/40" aria-hidden>└</span>
+                        )}
                         <span className="truncate">{m.name}</span>
                         {synkarMapp === m.id
                           ? <span className="ml-auto shrink-0 text-[10px] text-accent-soft">hämtar…</span>
@@ -837,7 +875,11 @@ export default function Mail() {
               onFlytta={(mappId) => { setVisaFlytt(false); flytta([vald.id], mappId) }}
               onRadera={() => flytta([vald.id], undefined, 'trash')}
               onSkicka={async (kropp) => {
-                const svar = await anropaFunktion('mail-send', { ...kropp, inReplyToId: vald.id })
+                // inReplyToId sätter In-Reply-To och References. Det hör hemma
+                // i ett svar, inte i en vidarebefordran.
+                const { vidarebefordran, ...rest } = kropp as Record<string, unknown>
+                const svar = await anropaFunktion('mail-send',
+                  vidarebefordran ? rest : { ...rest, inReplyToId: vald.id })
                 if (svar?.fel) return { fel: svar.fel as string }
                 uppdatera(vald.id, { reply_later: false } as Partial<Mejl>)
                 setTimeout(() => laddaMeta(), 8000) // kopian till Skickat gors i bakgrunden
@@ -1191,8 +1233,11 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   const [kvitto, setKvitto] = useState<string | null>(null)
   const traffar = mappar.filter((m) => m.path.toLowerCase().includes(flyttSok.toLowerCase())).slice(0, 40)
 
-  // Svarsruta — avsändaren förvald till kontot mejlet kom till
-  const [visaSvar, setVisaSvar] = useState(false)
+  // Svarsruta — avsändaren förvald till kontot mejlet kom till.
+  // Samma ruta används för att svara och för att vidarebefordra; det som
+  // skiljer är mottagare, ämnesrad och hur originalet återges.
+  const [lage, setLage] = useState<'svar' | 'vidare' | null>(null)
+  const visaSvar = lage !== null
   const [franKonto, setFranKonto] = useState(mejl.account_id)
   const [till, setTill] = useState('')
   const [amne, setAmne] = useState('')
@@ -1202,12 +1247,28 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
 
   useEffect(() => {
-    setVisaSvar(false); setResultat(null); setBilagor([])
+    setLage(null); setResultat(null); setBilagor([])
     setFranKonto(mejl.account_id)
     setTill(mejl.from_email ?? '')
     setAmne(/^re:/i.test(mejl.subject) ? mejl.subject : `Re: ${mejl.subject}`)
     setText('')
   }, [mejl.id, mejl.account_id, mejl.from_email, mejl.subject])
+
+  /** Öppnar rutan i rätt läge och fyller i det som skiljer de två åt. */
+  function oppnaRuta(nyttLage: 'svar' | 'vidare') {
+    setResultat(null)
+    if (nyttLage === 'vidare') {
+      // Tom mottagare med flit — vidarebefordran utan adressat är det
+      // vanligaste sättet att skicka ett mejl till fel person.
+      setTill('')
+      setAmne(/^(vb|fwd?):/i.test(mejl.subject) ? mejl.subject : `VB: ${mejl.subject}`)
+    } else {
+      setTill(mejl.from_email ?? '')
+      setAmne(/^re:/i.test(mejl.subject) ? mejl.subject : `Re: ${mejl.subject}`)
+    }
+    setText('')
+    setLage(nyttLage)
+  }
   const [kropp, setKropp] = useState<{ text_body: string | null; html_body: string | null } | null>(null)
   const [hamtar, setHamtar] = useState(false)
   const [fel, setFel] = useState<string | null>(null)
@@ -1244,13 +1305,13 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   // rutan är tom, så att ingen förlorar det den redan skrivit.
   const svarsRuta = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
-    if (!visaSvar || !kropp || text.trim()) return
-    setText(byggCitat(mejl, kropp))
+    if (!lage || !kropp || text.trim()) return
+    setText(lage === 'vidare' ? byggVidare(mejl, kropp) : byggCitat(mejl, kropp))
     // Citatet skrivs in efter att rutan fått fokus, så markören måste
     // flyttas tillbaka — annars börjar man skriva under citatet.
     setTimeout(() => svarsRuta.current?.setSelectionRange(0, 0), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visaSvar, kropp])
+  }, [lage, kropp])
 
   const part = motpart(mejl)
   const namn = part.namn
@@ -1269,7 +1330,8 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
             Listan
           </button>
         )}
-        <Verktyg ikon="✏️" text="Svara" aktiv={visaSvar} onClick={() => setVisaSvar(!visaSvar)} />
+        <Verktyg ikon="✏️" text="Svara" aktiv={lage === 'svar'} onClick={() => (lage === 'svar' ? setLage(null) : oppnaRuta('svar'))} />
+        <Verktyg ikon="↪️" text="Vidarebefordra" aktiv={lage === 'vidare'} onClick={() => (lage === 'vidare' ? setLage(null) : oppnaRuta('vidare'))} />
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
         <Verktyg ikon="📁" text={flyttar ? 'Flyttar…' : 'Flytta till…'} aktiv={visaFlytt} onClick={() => { if (!flyttar) { setVisaFlytt(!visaFlytt); setFlyttSok('') } }} />
         <Verktyg ikon="🗑" text="Radera" onClick={onRadera} />
@@ -1381,9 +1443,17 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
                 // Låst iframe: inga skript, inga formulär, ingen navigering.
                 // Vitt "papper" — mejl är formgivna för ljus bakgrund, och att
                 // tvinga ljus text gör dem oläsbara när de har egen ljus bakgrund.
+                // sandbox="" blockerade all navigering, så länkar gjorde
+                // ingenting alls när man klickade. allow-popups släpper fram
+                // dem; escape-sandbox gör att den nya fliken blir en vanlig
+                // flik och inte ärver låsningen. Skript är fortfarande
+                // förbjudna — det är allow-scripts som vore farligt, inte det
+                // här. <base target="_blank"> gör att allt öppnas i ny flik i
+                // stället för att försöka ersätta läsrutan.
                 <iframe
-                  sandbox=""
-                  srcDoc={`<style>html,body{background:#ffffff;color:#1f2937;margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.6;padding:16px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}</style>${kropp.html_body}`}
+                  sandbox="allow-popups allow-popups-to-escape-sandbox"
+                  referrerPolicy="no-referrer"
+                  srcDoc={`<base target="_blank" rel="noopener noreferrer"><style>html,body{background:#ffffff;color:#1f2937;margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.6;padding:16px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}a{color:#1d4ed8}</style>${kropp.html_body}`}
                   className="h-[55vh] w-full rounded-xl border border-border bg-white"
                   title="Mejlinnehåll"
                 />
@@ -1401,7 +1471,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
       <div className="border-t border-border p-3">
         {!visaSvar ? (
           <button
-            onClick={() => setVisaSvar(true)}
+            onClick={() => oppnaRuta('svar')}
             className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2.5 text-left transition-colors hover:bg-card-hover"
           >
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ background: konto?.color ?? '#6366f1' }}>
@@ -1445,7 +1515,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
               value={text}
               onChange={(e) => setText(e.target.value)}
               ref={svarsRuta}
-              placeholder="Skriv ditt svar…"
+              placeholder={lage === 'vidare' ? 'Skriv en rad innan du skickar vidare…' : 'Skriv ditt svar…'}
               autoFocus
               // Citatet ligger redan i rutan — markören hör hemma överst
               onFocus={(e) => e.currentTarget.setSelectionRange(0, 0)}
@@ -1471,7 +1541,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
             )}
 
             <div className="flex items-center justify-between">
-              <button onClick={() => setVisaSvar(false)} className="text-xs text-muted hover:text-ink">Avbryt</button>
+              <button onClick={() => setLage(null)} className="text-xs text-muted hover:text-ink">Avbryt</button>
               <button
                 disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
                 onClick={async () => {
@@ -1480,9 +1550,13 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
                     const r = await onSkicka({
                       fromAccountId: franKonto, to: till.trim(), subject: amne, body: text,
                       attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
+                      // Ett vidarebefordrat mejl är inte ett svar. Sätts
+                      // In-Reply-To hamnar det i mottagarens tråd med någon
+                      // hen aldrig mejlat.
+                      vidarebefordran: lage === 'vidare',
                     })
                     setResultat(r)
-                    if (r.ok) { setText(''); setTimeout(() => setVisaSvar(false), 1200) }
+                    if (r.ok) { setText(''); setTimeout(() => setLage(null), 1200) }
                   } catch (e) {
                     setResultat({ fel: e instanceof Error ? e.message : String(e) })
                   } finally {
