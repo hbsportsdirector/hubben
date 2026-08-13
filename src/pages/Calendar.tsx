@@ -352,9 +352,15 @@ export default function Calendar() {
         </p>
       )}
 
+      {/* Höjden nedanför: dvh, inte vh. På iOS mäts vh mot den STÖRSTA
+          viewporten — den man får när adressfältet glidit undan — så 72vh
+          stack ut under adressfältet så fort det syntes. Och golvet på 520 px
+          var högre än vad en liten telefon har kvar under kromet, vilket
+          tvingade fram en andra scroll. Lägre golv på mobil, samma känsla på
+          stor skärm. */}
       <Card className="!p-4">
         {loading ? <Spinner /> : (
-          <div style={{ height: '72vh', minHeight: 520 }}>
+          <div className="h-[62dvh] min-h-[380px] md:h-[72dvh] md:min-h-[520px]">
             <DnDCalendar
               localizer={localizer}
               culture="sv"

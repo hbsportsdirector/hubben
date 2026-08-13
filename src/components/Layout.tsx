@@ -150,7 +150,10 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
       )}
 
       {/* Bottennav (mobil) */}
-      <nav className="fixed inset-x-0 bottom-0 z-50 flex border-t border-border bg-surface/95 px-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-xl md:hidden">
+      {/* data-bottennav: mejlvyn mäter den här för att veta hur högt den får
+          bli. Höjden beror på telefonens safe-area och går inte att räkna ut
+          i förväg. */}
+      <nav data-bottennav className="fixed inset-x-0 bottom-0 z-50 flex border-t border-border bg-surface/95 px-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-xl md:hidden">
         {iSnabbraden.map((item) => (
           <NavLink
             key={item.to}

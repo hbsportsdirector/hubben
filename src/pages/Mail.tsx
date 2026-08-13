@@ -364,6 +364,41 @@ export default function Mail() {
     return () => mq.removeEventListener('change', lyssna)
   }, [])
 
+  // Smal skärm: panelen ska nå från där den råkar börja ända ner till
+  // bottennavet. Förut drogs 22rem bort på höft, vilket lämnade ~315 px lista
+  // på en liten telefon — och kromet ovanför ändrar ju höjd så fort chipsen
+  // radbryts eller ett konto tillkommer. Mätning i stället för gissning.
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [panelHojd, setPanelHojd] = useState<number | null>(null)
+  const [visaSchema, setVisaSchema] = useState(false)
+  useEffect(() => {
+    const el = panelRef.current
+    if (!el) return
+    const rakna = () => {
+      if (window.matchMedia('(min-width: 1024px)').matches) { setPanelHojd(null); return }
+      const nav = document.querySelector('[data-bottennav]')
+      const navHojd = nav ? nav.getBoundingClientRect().height : 72
+      // rect.top är avståndet till skärmens överkant just nu. Panelen fyller
+      // exakt resten, så sidan får inget eget scrollande — och då förblir
+      // mätningen giltig.
+      const kvar = window.innerHeight - el.getBoundingClientRect().top - navHojd - 8
+      const ny = Math.max(320, Math.round(kvar))
+      // Samma värde igen får inte ge en ny rendering — panelen sitter i det
+      // träd observatören tittar på, så det skulle bli en evig runda.
+      setPanelHojd((forra) => (forra === ny ? forra : ny))
+    }
+    rakna()
+    window.addEventListener('resize', rakna)
+    window.addEventListener('orientationchange', rakna)
+    const ro = new ResizeObserver(rakna)
+    if (el.parentElement) ro.observe(el.parentElement)
+    return () => {
+      window.removeEventListener('resize', rakna)
+      window.removeEventListener('orientationchange', rakna)
+      ro.disconnect()
+    }
+  }, [brett, visaSchema, konton.length, lada])
+
   /** Mapplistan ska visa mappar man faktiskt navigerar till. Bort med Gmails
    *  vy-mappar, och bort med dem som redan har en egen låda — annars är
    *  fyrtiosju rader mest brus runt de tio man använder. */
@@ -703,7 +738,24 @@ export default function Mail() {
       {/* Sidokolumnen finns först från xl. På smalare skärmar flyttar dagens
           schema och lådorna upp hit, så man kommer åt dem i telefonen. */}
       <div className="space-y-2 xl:hidden">
-        <DagensSchema />
+        {/* Dagens schema är värdefullt men tar en fjärdedel av telefonens
+            skärm, och varje pixel här är en pixel mindre mejllista. Hopfällt
+            som förval på smal skärm; från lg finns det gott om plats. */}
+        <div className="hidden lg:block xl:hidden">
+          <DagensSchema />
+        </div>
+        <div className="lg:hidden">
+          {visaSchema ? (
+            <DagensSchema />
+          ) : (
+            <button
+              onClick={() => setVisaSchema(true)}
+              className="w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-[13px] text-muted"
+            >
+              📅 Visa dagens schema
+            </button>
+          )}
+        </div>
         <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
           {LADOR.map((l) => (
             <button
@@ -726,7 +778,11 @@ export default function Mail() {
         </div>
       </div>
 
-      <div className="flex h-[calc(100dvh-22rem)] gap-3 sm:h-[calc(100dvh-20rem)] xl:h-[calc(100vh-11.5rem)]">
+      <div
+        ref={panelRef}
+        style={panelHojd ? { height: panelHojd } : undefined}
+        className="flex gap-3 lg:h-[calc(100dvh-13rem)] xl:h-[calc(100dvh-11.5rem)]"
+      >
         {/* Lådor, konton och mappar */}
         <aside
           style={brett ? { width: sidoBredd } : undefined}
