@@ -1437,6 +1437,10 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
   // Mejl är formgivna för vitt papper, och vitt papper mitt i ett mörkt
   // gränssnitt lyser. Dämpningen sänker ljusstyrkan utan att vända färgerna —
   // inverterade nyhetsbrev blir oläsliga.
+  //
+  // Lite värme och något mindre kontrast utöver nedsläckningen: rent nedtonat
+  // vitt blir blågrått och kallt, och det är just den kylan som skaver mot ett
+  // mörkt gränssnitt på kvällen.
   const [dampad, setDampad] = useState(() => localStorage.getItem('hubben.mejl.ljus') !== 'fullt')
 
   useEffect(() => {
@@ -1631,8 +1635,8 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
                 <iframe
                   sandbox="allow-popups allow-popups-to-escape-sandbox"
                   referrerPolicy="no-referrer"
-                  srcDoc={`<base target="_blank" rel="noopener noreferrer"><style>html,body{background:#f4f4f6;color:#1f2937;margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.6;padding:16px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}a{color:#1d4ed8}</style>${kropp.html_body}`}
-                  style={dampad ? { filter: 'brightness(0.82) contrast(1.04)' } : undefined}
+                  srcDoc={`<base target="_blank" rel="noopener noreferrer"><style>html,body{background:#eeece7;color:#1f2937;margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.6;padding:16px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}a{color:#1d4ed8}</style>${kropp.html_body}`}
+                  style={dampad ? { filter: 'brightness(0.68) sepia(0.12) contrast(0.96)' } : undefined}
                   className="min-h-0 w-full flex-1 rounded-xl border border-border bg-white"
                   title="Mejlinnehåll"
                 />
