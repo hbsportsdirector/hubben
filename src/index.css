@@ -65,6 +65,23 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   }
 }
 
+/* Allt som gömmer sig bakom hover är OÅTKOMLIGT på en pekskärm.
+ *
+ * Redigera- och ta bort-knapparna på uppgifter, mål, projekt, anteckningar,
+ * länkar, vanor, pass, transaktioner, budgetar och sparmål ligger alla på
+ * `opacity-0 group-hover:opacity-100`. Ett finger utlöser ingen hover, så i
+ * telefonen gick det inte att ändra eller ta bort någonting alls — knapparna
+ * fanns i DOM:en men var osynliga. Det är därför "alla funktioner är dåliga
+ * på telefonen": de flesta går helt enkelt inte att nå.
+ *
+ * Samma grepp som tryckytorna nedanför: golvet sätts en gång här i stället för
+ * på tretton ställen, och tätheten på datorn lämnas orörd. */
+@media (pointer: coarse) {
+  main [class~="opacity-0"] {
+    opacity: 1 !important;
+  }
+}
+
 /* Tryckytor på pekskärm.
  *
  * En muspekare träffar en knapp på 20 px. Ett finger gör det inte — mätningen
