@@ -1,0 +1,79 @@
+# Inställningarna som INTE syns i källkoden.
+#
+# verify_jwt avgör om Supabase kräver en giltig inloggningstoken innan
+# funktionen ens körs. De fem som står på false gör det av var sitt tvingande
+# skäl — det står i respektive fils inledning. Sätt aldrig någon av dem till
+# true utan att läsa den kommentaren först, och sätt aldrig någon annan
+# funktion till false.
+
+project_id = "abwmdhvaxqlpyzgvuedj"
+
+# --- Kalender ---
+[functions.calendar-push]
+verify_jwt = true
+
+# Släpper in schemaläggaren via cron-nyckeln, som inte har någon session
+[functions.calendar-sync]
+verify_jwt = false
+
+[functions.google-oauth-start]
+verify_jwt = true
+
+# Google skickar tillbaka en webbläsarredirect utan session; skyddet är
+# den HMAC-signerade state-strängen
+[functions.google-oauth-callback]
+verify_jwt = false
+
+# --- Mejl ---
+# Släpper in schemaläggaren via cron-nyckeln
+[functions.mail-sync]
+verify_jwt = false
+
+# Samma skäl som mail-sync
+[functions.mail-drain]
+verify_jwt = false
+
+[functions.mail-body]
+verify_jwt = true
+
+[functions.mail-folders]
+verify_jwt = true
+
+[functions.mail-prefetch]
+verify_jwt = true
+
+[functions.mail-attachment]
+verify_jwt = true
+
+[functions.mail-send]
+verify_jwt = true
+
+[functions.mail-move]
+verify_jwt = true
+
+[functions.mail-move-x]
+verify_jwt = true
+
+[functions.mail-move-bulk]
+verify_jwt = true
+
+[functions.ms-oauth-start]
+verify_jwt = true
+
+# Samma skäl som google-oauth-callback
+[functions.ms-oauth-callback]
+verify_jwt = false
+
+# --- Övrigt ---
+[functions.market-data]
+verify_jwt = true
+
+[functions.imap-probe]
+verify_jwt = true
+
+[functions.imap-test]
+verify_jwt = true
+
+# Utfasad — svarar 410. Se filens inledning.
+[functions.assistent]
+verify_jwt = true

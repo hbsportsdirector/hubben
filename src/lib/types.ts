@@ -54,8 +54,12 @@ export interface HubHabitLog {
 export interface HubEvent {
   id: string
   user_id: string
-  /** Satt om handelsen kommer fran en extern kalender (Google) */
+  /** Var handelsen LIGGER hos Google just nu - inte dit den ar pa vag */
   calendar_id?: string | null
+  /** Vart Per vill flytta den. Satt tills calendar-push kort Googles move. */
+  pending_till_kalender?: string | null
+  /** Handelsens id hos Google. Saknas den finns den bara i Hubben. */
+  external_id?: string | null
   /** Satt om handelsen ar ett tillfalle ur en aterkommande serie */
   series_master_id?: string | null
   title: string

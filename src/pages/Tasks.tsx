@@ -212,12 +212,20 @@ export default function Tasks() {
 
 function ProjectsCard({ projects, onChange }: { projects: HubProject[]; onChange: () => void }) {
   const [name, setName] = useState('')
+  const [fel, setFel] = useState<string | null>(null)
   const colors = ['#6366f1', '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#e879f9']
 
   async function add() {
     if (!name.trim()) return
-    const userId = await getUserId()
-    await supabase.from('hub_projects').insert({ user_id: userId, name: name.trim(), color: colors[projects.length % colors.length] })
+    setFel(null)
+    try {
+      const { error } = await supabase.from('hub_projects')
+        .insert({ user_id: await getUserId(), name: name.trim(), color: colors[projects.length % colors.length] })
+      if (error) { setFel(error.message); return }
+    } catch (e) {
+      setFel(e instanceof Error ? e.message : String(e))
+      return
+    }
     setName('')
     onChange()
   }
@@ -234,6 +242,11 @@ function ProjectsCard({ projects, onChange }: { projects: HubProject[]; onChange
         <Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Nytt projekt…" />
         <Button onClick={add}>+</Button>
       </div>
+      {fel && (
+        <p className="mb-3 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">
+          Projektet sparades inte: {fel}
+        </p>
+      )}
       <ul className="space-y-1.5">
         {projects.map((p) => (
           <li key={p.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-card-hover">
@@ -255,6 +268,7 @@ function TaskModal({ open, onClose, task, projects, onSaved }: {
   const [dueDate, setDueDate] = useState('')
   const [priority, setPriority] = useState(2)
   const [projectId, setProjectId] = useState('')
+  const [fel, setFel] = useState<string | null>(null)
 
   useEffect(() => {
     setTitle(task?.title ?? '')
@@ -262,10 +276,14 @@ function TaskModal({ open, onClose, task, projects, onSaved }: {
     setDueDate(task?.due_date ?? '')
     setPriority(task?.priority ?? 2)
     setProjectId(task?.project_id ?? '')
+    setFel(null)
   }, [task, open])
 
+  // Går skrivningen fel stannar rutan kvar med felet framme. Förut stängdes
+  // den ändå, och uppgiften bara försvann utan att någon fick veta varför.
   async function save() {
-    if (!title.trim()) return
+    if (!title.trim()) { setFel('Uppgiften behöver en titel.'); return }
+    setFel(null)
     const payload = {
       title: title.trim(),
       notes: notes.trim() || null,
@@ -273,11 +291,14 @@ function TaskModal({ open, onClose, task, projects, onSaved }: {
       priority,
       project_id: projectId || null,
     }
-    if (task) {
-      await supabase.from('hub_tasks').update(payload).eq('id', task.id)
-    } else {
-      const userId = await getUserId()
-      await supabase.from('hub_tasks').insert({ ...payload, user_id: userId })
+    try {
+      const { error } = task
+        ? await supabase.from('hub_tasks').update(payload).eq('id', task.id)
+        : await supabase.from('hub_tasks').insert({ ...payload, user_id: await getUserId() })
+      if (error) { setFel(error.message); return }
+    } catch (e) {
+      setFel(e instanceof Error ? e.message : String(e))
+      return
     }
     onClose()
     onSaved()
@@ -315,6 +336,11 @@ function TaskModal({ open, onClose, task, projects, onSaved }: {
             {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
         </div>
+        {fel && (
+          <p className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">
+            Uppgiften sparades inte: {fel}
+          </p>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="ghost" onClick={onClose}>Avbryt</Button>
           <Button onClick={save}>Spara</Button>
@@ -328,21 +354,27 @@ function GoalModal({ open, onClose, goal, onSaved }: { open: boolean; onClose: (
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [targetDate, setTargetDate] = useState('')
+  const [fel, setFel] = useState<string | null>(null)
 
   useEffect(() => {
     setTitle(goal?.title ?? '')
     setDescription(goal?.description ?? '')
     setTargetDate(goal?.target_date ?? '')
+    setFel(null)
   }, [goal, open])
 
   async function save() {
-    if (!title.trim()) return
+    if (!title.trim()) { setFel('Målet behöver en rubrik.'); return }
+    setFel(null)
     const payload = { title: title.trim(), description: description.trim() || null, target_date: targetDate || null }
-    if (goal) {
-      await supabase.from('hub_goals').update(payload).eq('id', goal.id)
-    } else {
-      const userId = await getUserId()
-      await supabase.from('hub_goals').insert({ ...payload, user_id: userId })
+    try {
+      const { error } = goal
+        ? await supabase.from('hub_goals').update(payload).eq('id', goal.id)
+        : await supabase.from('hub_goals').insert({ ...payload, user_id: await getUserId() })
+      if (error) { setFel(error.message); return }
+    } catch (e) {
+      setFel(e instanceof Error ? e.message : String(e))
+      return
     }
     onClose()
     onSaved()
@@ -363,6 +395,11 @@ function GoalModal({ open, onClose, goal, onSaved }: { open: boolean; onClose: (
           <Label>Måldatum</Label>
           <Input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
         </div>
+        {fel && (
+          <p className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">
+            Målet sparades inte: {fel}
+          </p>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="ghost" onClick={onClose}>Avbryt</Button>
           <Button onClick={save}>Spara</Button>

@@ -141,9 +141,15 @@ export default function Calendar() {
 
   // Vad som faktiskt ritas ut. Kalendrarna vaxlas i sidhuvudet, precis som i
   // Google - synligheten sparas sa den overlever ett sidbyte.
+  // Ligger en flytt i kon hor handelsen hemma i den kalender Per valde, aven
+  // om Google inte hunnit med an. calendar_id ar sanningen om servern,
+  // pending_till_kalender sanningen om vad han bad om.
   const synligaHandelser = useMemo(() => {
     const dolda = new Set(kalendrar.filter((k) => !k.synlig).map((k) => k.id))
-    return events.filter((e) => (e.raw.calendar_id ? !dolda.has(e.raw.calendar_id) : visaEgna))
+    return events.filter((e) => {
+      const hemvist = e.raw.pending_till_kalender ?? e.raw.calendar_id
+      return hemvist ? !dolda.has(hemvist) : visaEgna
+    })
   }, [events, kalendrar, visaEgna])
 
   const laddaKalendrar = useCallback(async () => {
@@ -454,6 +460,9 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
 
   // Ett tillfälle ur en serie — Google har expanderat den åt oss
   const iSerie = !!event?.series_master_id
+  // Redan hos Google. Då går den att flytta till en annan kalender, men inte
+  // att lyfta ur Google helt — det gör man med Ta bort.
+  const iGoogle = !!event?.external_id && !!event?.calendar_id
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState('')
@@ -475,7 +484,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       setEndTime(event.ends_at ? format(parseISO(event.ends_at), 'HH:mm') : '')
       setAllDay(event.all_day)
       setColor(event.color)
-      setValdKalender(event.calendar_id ?? '')
+      setValdKalender(event.pending_till_kalender ?? event.calendar_id ?? '')
       // Serier ändras aldrig till en annan upprepning härifrån — det gör man
       // i Google. Här handlar det om att ändra tid, titel eller plats.
       setUpprepning('aldrig')
@@ -569,9 +578,12 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
     }
     // Tom sträng betyder "bara i Hubben" — då finns inget att skicka till Google
     const kalenderId = valdKalender || null
+    // Finns händelsen redan hos Google är ett kalenderbyte en flytt. Gör den
+    // inte det är kalendervalet i stället ett skapa — den föds i Google nu.
+    const flyttar = iGoogle && !!kalenderId && kalenderId !== event?.calendar_id
     const ko = kalenderId
       ? {
-          pending_op: event ? 'andra' : 'skapa',
+          pending_op: iGoogle ? 'andra' : 'skapa',
           pending_scope: iSerie ? omfattning : null,
           pending_nasta: new Date().toISOString(),
           pending_forsok: 0,
@@ -579,7 +591,18 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       : {}
 
     if (event) {
-      await supabase.from('hub_events').update({ ...payload, ...ko }).eq('id', event.id)
+      await supabase.from('hub_events').update({
+        ...payload,
+        ...ko,
+        // calendar_id skrivs ALDRIG om härifrån när händelsen finns hos
+        // Google — den betyder var Google har den. Önskemålet ligger i
+        // pending_till_kalender tills calendar-push kört Googles move.
+        // Skrevs den om direkt skulle nästa synk hitta raden på fel plats och
+        // lägga in en dubblett i den gamla kalendern.
+        ...(iGoogle
+          ? { pending_till_kalender: flyttar ? kalenderId : null }
+          : { calendar_id: kalenderId }),
+      }).eq('id', event.id)
     } else {
       const userId = await getUserId()
       const slut: Slut = slutTyp === 'antal'
@@ -611,11 +634,15 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
             className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
           >
             {kalendrar.map((k) => <option key={k.id} value={k.id}>{k.namn}</option>)}
-            <option value="">Bara i Hubben</option>
+            {/* En händelse som redan ligger hos Google kan flyttas mellan
+                kalendrar, men inte tas ur Google här — det är Ta bort. */}
+            {!iGoogle && <option value="">Bara i Hubben</option>}
           </select>
           <p className={`mt-1 text-xs ${valdKalender ? 'text-muted' : 'text-warn'}`}>
             {valdKalender
-              ? 'Hamnar i Google och syns i telefonen.'
+              ? iGoogle && valdKalender !== event?.calendar_id
+                ? 'Flyttas till den kalendern i Google när du sparar.'
+                : 'Hamnar i Google och syns i telefonen.'
               : kalendrar.length
                 ? 'Stannar här — syns inte i Google Kalender.'
                 : 'Ingen Google-kalender inläst. Händelsen stannar i Hubben.'}
