@@ -300,6 +300,16 @@ export default function Mail() {
   const mappdjup = (path: string) =>
     (path.replace(/^INBOX[./]/, '').replace(/^\[Gmail\][./]/, '').match(/[./]/g) ?? []).length
 
+  /** Sökvägen till mappen ovanför, eller null om det inte finns någon. */
+  const foraldern = (path: string): string | null => {
+    const i = Math.max(path.lastIndexOf('.'), path.lastIndexOf('/'))
+    return i > 0 ? path.slice(0, i) : null
+  }
+
+  // Trädet börjar hopfällt. Trettiosju mappar utfällda är samma brus som den
+  // platta listan var — poängen med nivåer är att slippa se dem alla.
+  const [oppnaMappar, setOppnaMappar] = useState<Set<string>>(new Set())
+
   /** Mapplistan ska visa mappar man faktiskt navigerar till. Bort med Gmails
    *  vy-mappar, och bort med dem som redan har en egen låda — annars är
    *  fyrtiosju rader mest brus runt de tio man använder. */
@@ -604,6 +614,37 @@ export default function Mail() {
         )}
       </div>
 
+      {/* Kontovalet på egen rad högst upp. Det låg i sidokolumnen, men den
+          finns bara från xl — och vilket konto man tittar i är ett val man
+          gör ofta, inte något man letar rätt på. */}
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
+        <button
+          onClick={() => { setKontoFilter('alla'); setValdId(null) }}
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] transition-colors ${
+            kontoFilter === 'alla'
+              ? 'border-accent bg-accent/15 font-medium text-accent-soft'
+              : 'border-border text-muted hover:bg-card-hover hover:text-ink'
+          }`}
+        >
+          <span className="h-2 w-2 shrink-0 rounded-full bg-muted" />
+          Alla konton
+        </button>
+        {konton.map((k) => (
+          <button
+            key={k.id}
+            onClick={() => { setKontoFilter(k.id); setValdId(null) }}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] transition-colors ${
+              kontoFilter === k.id
+                ? 'border-accent bg-accent/15 font-medium text-accent-soft'
+                : 'border-border text-muted hover:bg-card-hover hover:text-ink'
+            }`}
+          >
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: k.color }} />
+            {k.label}
+          </button>
+        ))}
+      </div>
+
       {/* Sidokolumnen finns först från xl. På smalare skärmar flyttar dagens
           schema och lådorna upp hit, så man kommer åt dem i telefonen. */}
       <div className="space-y-2 xl:hidden">
@@ -630,7 +671,7 @@ export default function Mail() {
         </div>
       </div>
 
-      <div className="flex h-[calc(100dvh-19rem)] gap-3 sm:h-[calc(100dvh-17rem)] xl:h-[calc(100vh-8.5rem)]">
+      <div className="flex h-[calc(100dvh-22rem)] gap-3 sm:h-[calc(100dvh-20rem)] xl:h-[calc(100vh-11.5rem)]">
         {/* Lådor, konton och mappar */}
         <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-3 xl:flex">
           <DagensSchema />
@@ -652,30 +693,6 @@ export default function Mail() {
                 <span className="flex-1 truncate">{l.namn}</span>
                 {antal[l.id] > 0 && <span className="text-[11px] font-semibold">{antal[l.id]}</span>}
                 <kbd className="text-[9px] text-muted/50">{l.tangent}</kbd>
-              </button>
-            ))}
-          </div>
-
-          <div>
-            <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Konton</p>
-            <button
-              onClick={() => { setKontoFilter('alla'); setValdId(null) }}
-              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors ${
-                kontoFilter === 'alla' ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
-              }`}
-            >
-              <span className="h-2 w-2 rounded-full bg-muted" /> Alla konton
-            </button>
-            {konton.map((k) => (
-              <button
-                key={k.id}
-                onClick={() => { setKontoFilter(k.id); setValdId(null) }}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors ${
-                  kontoFilter === k.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
-                }`}
-              >
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: k.color }} />
-                <span className="truncate">{k.label}</span>
               </button>
             ))}
           </div>
@@ -703,42 +720,76 @@ export default function Mail() {
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: k.color }} />
                       {k.label}
                     </p>
-                    {kontotsMappar.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={async () => {
-                          setMappFilter(m.id); setValdId(null)
-                          // Lat synk: hämta mappen första gången den öppnas
-                          if (!m.last_synced_at) {
-                            setSynkarMapp(m.id)
-                            await anropaFunktion('mail-sync', { folderId: m.id })
-                            await laddaMeta()
-                            // Inte laddaMejl() här: den funktionen kommer från
-                            // renderingen där klicket skedde och har fortfarande
-                            // det FÖRRA mappvalet, så den skulle skriva över
-                            // listan med fel mapps innehåll. Räknaren får effekten
-                            // att köra om frågan med aktuellt val i stället.
-                            setDataVersion((v) => v + 1)
-                            setSynkarMapp(null)
-                          }
-                        }}
-                        title={m.path}
-                        style={{ paddingLeft: `${0.5 + mappdjup(m.path) * 0.85}rem` }}
-                        className={`flex w-full items-center gap-2 rounded-lg py-1 pr-2 text-left text-[12px] transition-colors ${
-                          mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
-                        }`}
-                      >
-                        {/* Undermappar får ett streck i stället för bara luft,
-                            annars är det svårt att se var en nivå börjar */}
-                        {mappdjup(m.path) > 0 && (
-                          <span className="shrink-0 text-muted/40" aria-hidden>└</span>
-                        )}
-                        <span className="truncate">{m.name}</span>
-                        {synkarMapp === m.id
-                          ? <span className="ml-auto shrink-0 text-[10px] text-accent-soft">hämtar…</span>
-                          : (m.total_count ?? 0) > 0 && <span className="ml-auto shrink-0 text-[10px] text-muted/70">{m.total_count}</span>}
-                      </button>
-                    ))}
+                    {kontotsMappar.map((m) => {
+                      const vagar = new Set(kontotsMappar.map((x) => x.path))
+                      const harBarn = kontotsMappar.some((x) => foraldern(x.path) === m.path)
+                      const oppen = oppnaMappar.has(m.path)
+                      // En mapp göms om någon förälder är hopfälld. Söker man
+                      // visas allt — då är det träffarna man vill åt, inte
+                      // trädet.
+                      if (!mappSok.trim()) {
+                        let p = foraldern(m.path)
+                        let dold = false
+                        while (p && !dold) {
+                          if (vagar.has(p) && !oppnaMappar.has(p)) dold = true
+                          p = foraldern(p)
+                        }
+                        if (dold) return null
+                      }
+                      return (
+                        <div
+                          key={m.id}
+                          style={{ paddingLeft: `${0.25 + mappdjup(m.path) * 0.8}rem` }}
+                          className={`flex items-center rounded-lg pr-2 text-[12px] transition-colors ${
+                            mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+                          }`}
+                        >
+                          {/* Pilen fäller ut och väljer inte mappen. Två saker
+                              på samma rad behöver två träffytor. */}
+                          {harBarn ? (
+                            <button
+                              onClick={() => setOppnaMappar((f) => {
+                                const n = new Set(f)
+                                if (n.has(m.path)) n.delete(m.path); else n.add(m.path)
+                                return n
+                              })}
+                              aria-label={oppen ? `Fäll ihop ${m.name}` : `Fäll ut ${m.name}`}
+                              aria-expanded={oppen}
+                              className="shrink-0 px-1 py-1 text-[10px] text-muted/70 hover:text-ink"
+                            >
+                              {oppen ? '▾' : '▸'}
+                            </button>
+                          ) : (
+                            <span className="w-[1.1rem] shrink-0" aria-hidden />
+                          )}
+                          <button
+                            onClick={async () => {
+                              setMappFilter(m.id); setValdId(null)
+                              // Lat synk: hämta mappen första gången den öppnas
+                              if (!m.last_synced_at) {
+                                setSynkarMapp(m.id)
+                                await anropaFunktion('mail-sync', { folderId: m.id })
+                                await laddaMeta()
+                                // Inte laddaMejl() här: den funktionen kommer från
+                                // renderingen där klicket skedde och har fortfarande
+                                // det FÖRRA mappvalet, så den skulle skriva över
+                                // listan med fel mapps innehåll. Räknaren får effekten
+                                // att köra om frågan med aktuellt val i stället.
+                                setDataVersion((v) => v + 1)
+                                setSynkarMapp(null)
+                              }
+                            }}
+                            title={m.path}
+                            className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left"
+                          >
+                            <span className="truncate">{m.name}</span>
+                            {synkarMapp === m.id
+                              ? <span className="ml-auto shrink-0 text-[10px] text-accent-soft">hämtar…</span>
+                              : (m.total_count ?? 0) > 0 && <span className="ml-auto shrink-0 text-[10px] text-muted/70">{m.total_count}</span>}
+                          </button>
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}
