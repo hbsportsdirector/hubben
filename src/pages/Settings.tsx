@@ -6,6 +6,7 @@ import type { HubMailAccount } from '../lib/types'
 import { Card, SectionTitle, Button, Input, Label, Spinner, Textarea } from '../components/ui'
 import { GoogleKalender } from '../components/GoogleKalender'
 import { OutlookKonto } from '../components/OutlookKonto'
+import { STORLEKAR, hamtaTextstorlek, sattTextstorlek } from '../lib/textstorlek'
 
 interface Testsvar {
   // Från imap-test
@@ -41,6 +42,7 @@ interface Kontostatus {
 }
 
 export default function Settings() {
+  const [storlek, setStorlek] = useState(hamtaTextstorlek)
   const [accounts, setAccounts] = useState<HubMailAccount[]>([])
   const [status, setStatus] = useState<Record<string, Kontostatus>>({})
   const [loading, setLoading] = useState(true)
@@ -102,6 +104,29 @@ export default function Settings() {
         <h1 className="text-2xl font-bold tracking-tight">Inställningar</h1>
         <p className="mt-1 text-sm text-muted">Dina mejlkonton är redan uppsatta — det enda som saknas är lösenorden.</p>
       </div>
+
+      <Card>
+        <h3 className="text-sm font-semibold">Textstorlek</h3>
+        <p className="mt-0.5 text-xs text-muted">
+          Skalar hela Hubben. Till skillnad från webbläsarens zoom tar den inte bort bredd på köpet —
+          och kolumnerna i mejlvyn går att dra om du vill fördela den annorlunda.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {STORLEKAR.map((s) => (
+            <button
+              key={s.varde}
+              onClick={() => { sattTextstorlek(s.varde); setStorlek(s.varde) }}
+              className={`rounded-xl border px-3 py-2 text-sm transition-colors ${
+                storlek === s.varde
+                  ? 'border-accent bg-accent/15 font-medium text-accent-soft'
+                  : 'border-border text-muted hover:bg-card-hover hover:text-ink'
+              }`}
+            >
+              {s.namn} <span className="text-[11px] text-muted/60">{s.varde} %</span>
+            </button>
+          ))}
+        </div>
+      </Card>
 
       <GoogleKalender />
 

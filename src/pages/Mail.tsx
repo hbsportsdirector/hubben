@@ -101,6 +101,7 @@ interface Mapp {
   total_count: number | null
   unseen_count: number | null
   last_synced_at: string | null
+  hidden: boolean
 }
 
 const AVATARFARGER = ['#3987e5', '#199e70', '#c98500', '#9085e9', '#e66767', '#d55181', '#d95926', '#0ea5e9']
@@ -290,7 +291,7 @@ export default function Mail() {
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
       supabase.from('hub_mail_accounts').select('id, label, color, email, signature, sent_kopia_fel').eq('active', true).order('sort_order'),
-      supabase.from('hub_folders').select('id, path, name, role, account_id, total_count, unseen_count, last_synced_at').eq('hidden', false).order('path'),
+      supabase.from('hub_folders').select('id, path, name, role, account_id, total_count, unseen_count, last_synced_at, hidden').order('path'),
     ])
     setKonton(k.data ?? [])
     setMappar(m.data ?? [])
@@ -336,6 +337,15 @@ export default function Mail() {
   // Trädet börjar hopfällt. Trettiosju mappar utfällda är samma brus som den
   // platta listan var — poängen med nivåer är att slippa se dem alla.
   const [oppnaMappar, setOppnaMappar] = useState<Set<string>>(new Set())
+  const [visaDolda, setVisaDolda] = useState(false)
+
+  /** Döljer eller tar tillbaka en mapp. Bara i Hubben — mappen och dess mejl
+   *  ligger orörda kvar på mejlservern. */
+  async function vaxlaDold(m: Mapp) {
+    await supabase.from('hub_folders').update({ hidden: !m.hidden }).eq('id', m.id)
+    if (mappFilter === m.id) setMappFilter(null)
+    await laddaMeta()
+  }
 
   // Kolumnbredder. Sparas per webbläsare — en bredd man dragit till rätta ska
   // inte behöva dras igen imorgon.
@@ -361,13 +371,14 @@ export default function Mail() {
     const q = mappSok.trim().toLowerCase()
     const lador = new Set(LADOR.map((l) => l.roll).filter(Boolean))
     return mappar.filter((m) => {
+      if (m.hidden && !visaDolda) return false
       if (arVymapp(m.path, m.role)) return false
       if (m.role === 'inbox' || (m.role && lador.has(m.role))) return false
       if (kontoFilter !== 'alla' && m.account_id !== kontoFilter) return false
       if (q && !m.name.toLowerCase().includes(q) && !m.path.toLowerCase().includes(q)) return false
       return true
     })
-  }, [mappar, mappSok, kontoFilter])
+  }, [mappar, mappSok, kontoFilter, visaDolda])
 
   const laddaMejl = useCallback(async () => {
     // hub_mejl vet vilken mapp ett mejl visas i — även när flytten ligger kvar
@@ -760,6 +771,7 @@ export default function Mail() {
               {konton.map((k) => {
                 const kontotsMappar = synligaMappar.filter((m) => m.account_id === k.id)
                 if (!kontotsMappar.length) return null
+                const vagar = new Set(kontotsMappar.map((x) => x.path))
                 return (
                   <div key={k.id} className="mb-2">
                     {/* Kontot syns med sin färg, så man vet vems mapp man väljer */}
@@ -768,7 +780,16 @@ export default function Mail() {
                       {k.label}
                     </p>
                     {kontotsMappar.map((m) => {
-                      const vagar = new Set(kontotsMappar.map((x) => x.path))
+                      // Djupet räknas bara på förfäder som faktiskt syns. En
+                      // mapp vars förälder är dold — Deleted ligger i en låda —
+                      // hör hemma längst ut, annars ser den ut att tillhöra
+                      // grannen ovanför.
+                      const djup = (() => {
+                        let d = 0
+                        let p = foraldern(m.path)
+                        while (p) { if (vagar.has(p)) d++; p = foraldern(p) }
+                        return d
+                      })()
                       const harBarn = kontotsMappar.some((x) => foraldern(x.path) === m.path)
                       const oppen = oppnaMappar.has(m.path)
                       // En mapp göms om någon förälder är hopfälld. Söker man
@@ -786,8 +807,8 @@ export default function Mail() {
                       return (
                         <div
                           key={m.id}
-                          style={{ paddingLeft: `${0.25 + mappdjup(m.path) * 0.8}rem` }}
-                          className={`flex items-center rounded-lg pr-2 text-[12px] transition-colors ${
+                          style={{ paddingLeft: `${0.25 + djup * 0.8}rem` }}
+                          className={`group/mapp flex items-center rounded-lg pr-1 text-[12px] transition-colors ${
                             mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
                           }`}
                         >
@@ -835,7 +856,7 @@ export default function Mail() {
                                   användas till något. Här: var mappen hör
                                   hemma, så man ser skillnad på två som heter
                                   samma sak i olika grenar. */}
-                              {brett && sidoBredd > 300 && mappdjup(m.path) > 0 && (
+                              {brett && sidoBredd > 300 && foraldern(m.path) && (
                                 <span className="block truncate text-[10px] text-muted/50">
                                   {m.path
                                     .replace(/^INBOX[./]/, '')
@@ -849,6 +870,16 @@ export default function Mail() {
                               ? <span className="ml-auto shrink-0 text-[10px] text-accent-soft">hämtar…</span>
                               : (m.total_count ?? 0) > 0 && <span className="ml-auto shrink-0 text-[10px] text-muted/70">{m.total_count}</span>}
                           </button>
+                          {/* Döljer bara i Hubben. Mappen och mejlen ligger
+                              orörda kvar på mejlservern. */}
+                          <button
+                            onClick={() => vaxlaDold(m)}
+                            title={m.hidden ? 'Visa igen' : 'Dölj i Hubben'}
+                            aria-label={m.hidden ? `Visa ${m.name}` : `Dölj ${m.name}`}
+                            className="shrink-0 px-1 py-1 text-[11px] text-muted/0 transition-colors group-hover/mapp:text-muted/60 hover:!text-ink"
+                          >
+                            {m.hidden ? '↩' : '✕'}
+                          </button>
                         </div>
                       )
                     })}
@@ -857,6 +888,16 @@ export default function Mail() {
               })}
               {synligaMappar.length === 0 && (
                 <p className="px-2 py-3 text-[11px] text-muted">Inga mappar matchar.</p>
+              )}
+              {(visaDolda || mappar.some((m) => m.hidden)) && (
+                <button
+                  onClick={() => setVisaDolda((v) => !v)}
+                  className="mt-1 w-full px-2 py-1.5 text-left text-[11px] text-muted/70 transition-colors hover:text-ink"
+                >
+                  {visaDolda
+                    ? '▾ Döljer de dolda igen'
+                    : `▸ ${mappar.filter((m) => m.hidden).length} dolda mappar`}
+                </button>
               )}
             </div>
           </div>
@@ -1439,7 +1480,7 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
 
   return (
     <div className="flex h-full flex-col">
-      <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-3 py-2">
+      <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-2 py-1">
         {/* På telefonen har läsrutan tagit listans plats — den här tar en tillbaka */}
         {onTillbaka && (
           <button
@@ -1510,25 +1551,23 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
         </p>
       )}
 
-      {/* Rubrikblocket står still — bara innehållet scrollar */}
+      {/* Rubrikblocket står still — bara innehållet scrollar. Hålls smalt
+          med flit: det är mejlet man öppnat rutan för, inte ramen runt. */}
       <div className="shrink-0 border-b border-border">
-        <div className="px-6 pt-4 pb-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
+        <div className="px-4 pb-2.5 pt-2.5">
+          <div className="flex items-start gap-2">
             {konto && (
-              <span className="rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${konto.color}22`, color: konto.color }}>
-                {konto.label}
-              </span>
+              <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: konto.color }} title={konto.label} />
             )}
+            <h2 className="min-w-0 flex-1 text-base font-semibold leading-snug">{mejl.subject || '(inget ämne)'}</h2>
           </div>
 
-          <h2 className="text-xl font-semibold leading-snug">{mejl.subject || '(inget ämne)'}</h2>
-
-          <div className="mt-3 flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: avatarFarg(namn) }}>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ background: avatarFarg(namn) }}>
               {initialer(namn)}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
+              <p className="truncate text-[13px] font-medium">
                 {part.prefix && <span className="font-normal text-muted">{part.prefix}</span>}
                 {namn}
               </p>
@@ -1548,8 +1587,8 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
       {/* Bilagelisten ligger utanför det som scrollar — den ska alltid synas */}
       <Bilagor msgId={mejl.id} aktiv={!hamtar} />
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="px-6 py-5">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
           {hamtar && <Spinner />}
           {fel && <p className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">Kunde inte hämta brödtexten: {fel}</p>}
           {kropp && (
@@ -1574,13 +1613,15 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
                   sandbox="allow-popups allow-popups-to-escape-sandbox"
                   referrerPolicy="no-referrer"
                   srcDoc={`<base target="_blank" rel="noopener noreferrer"><style>html,body{background:#ffffff;color:#1f2937;margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.6;padding:16px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}a{color:#1d4ed8}</style>${kropp.html_body}`}
-                  className="h-[55vh] w-full rounded-xl border border-border bg-white"
+                  className="min-h-0 w-full flex-1 rounded-xl border border-border bg-white"
                   title="Mejlinnehåll"
                 />
               ) : (
-                <pre className="max-w-prose whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-ink/90">
-                  {stada(kropp.text_body) || '(ingen textversion)'}
-                </pre>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <pre className="max-w-prose whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-ink/90">
+                    {stada(kropp.text_body) || '(ingen textversion)'}
+                  </pre>
+                </div>
               )}
             </>
           )}
