@@ -510,9 +510,12 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
 
   // Kalendrarna kan landa efter att formuläret öppnats. Utan det här blev
   // förvalet "Bara i Hubben" och händelsen nådde aldrig Google.
+  // Har man släckt alla kalendrar utom en är det den man arbetar i — då ska
+  // en ny händelse hamna där, inte i den som råkar stå först i listan.
   useEffect(() => {
     if (open && !event && valdKalender === null && kalendrar.length) {
-      setValdKalender(kalendrar[0].id)
+      const tanda = kalendrar.filter((k) => k.synlig)
+      setValdKalender((tanda.length ? tanda[0] : kalendrar[0]).id)
     }
   }, [open, event, kalendrar, valdKalender])
 
