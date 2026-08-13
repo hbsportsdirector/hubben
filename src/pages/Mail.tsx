@@ -165,6 +165,33 @@ function byggVidare(m: Mejl, kropp: { text_body: string | null; html_body: strin
   return `\n\n---------- Vidarebefordrat meddelande ----------\n${rubriker}\n\n${text}`
 }
 
+/** Draghandtaget mellan två kolumner.
+ *
+ *  Pekarfångst gör att draget följer med även när pekaren hamnar utanför det
+ *  smala handtaget — utan den tappar man greppet så fort man rör sig snabbt. */
+function Delare({ onDra }: { onDra: (dx: number) => void }) {
+  const forra = useRef(0)
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      onPointerDown={(e) => {
+        forra.current = e.clientX
+        e.currentTarget.setPointerCapture(e.pointerId)
+      }}
+      onPointerMove={(e) => {
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+        onDra(e.clientX - forra.current)
+        forra.current = e.clientX
+      }}
+      onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
+      className="hidden w-1.5 shrink-0 cursor-col-resize rounded-full transition-colors hover:bg-accent/40 xl:block"
+    />
+  )
+}
+
+const klam = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
+
 function visaTid(iso: string | null) {
   if (!iso) return ''
   const d = parseISO(iso)
@@ -309,6 +336,23 @@ export default function Mail() {
   // Trädet börjar hopfällt. Trettiosju mappar utfällda är samma brus som den
   // platta listan var — poängen med nivåer är att slippa se dem alla.
   const [oppnaMappar, setOppnaMappar] = useState<Set<string>>(new Set())
+
+  // Kolumnbredder. Sparas per webbläsare — en bredd man dragit till rätta ska
+  // inte behöva dras igen imorgon.
+  const [sidoBredd, setSidoBredd] = useState(() => Number(localStorage.getItem('hubben.mejl.sido')) || 208)
+  const [listBredd, setListBredd] = useState(() => Number(localStorage.getItem('hubben.mejl.lista')) || 384)
+  useEffect(() => { localStorage.setItem('hubben.mejl.sido', String(sidoBredd)) }, [sidoBredd])
+  useEffect(() => { localStorage.setItem('hubben.mejl.lista', String(listBredd)) }, [listBredd])
+
+  // Handtagen finns bara där trekolumnaren finns. På smalare skärmar byter
+  // vyerna av varandra i stället, och då finns ingenting att dra i.
+  const [brett, setBrett] = useState(() => window.matchMedia('(min-width: 1280px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1280px)')
+    const lyssna = () => setBrett(mq.matches)
+    mq.addEventListener('change', lyssna)
+    return () => mq.removeEventListener('change', lyssna)
+  }, [])
 
   /** Mapplistan ska visa mappar man faktiskt navigerar till. Bort med Gmails
    *  vy-mappar, och bort med dem som redan har en egen låda — annars är
@@ -673,7 +717,10 @@ export default function Mail() {
 
       <div className="flex h-[calc(100dvh-22rem)] gap-3 sm:h-[calc(100dvh-20rem)] xl:h-[calc(100vh-11.5rem)]">
         {/* Lådor, konton och mappar */}
-        <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-3 xl:flex">
+        <aside
+          style={brett ? { width: sidoBredd } : undefined}
+          className="hidden shrink-0 flex-col gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-3 xl:flex"
+        >
           <DagensSchema />
 
           <div>
@@ -782,7 +829,22 @@ export default function Mail() {
                             title={m.path}
                             className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left"
                           >
-                            <span className="truncate">{m.name}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate">{m.name}</span>
+                              {/* Drar man ut kolumnen ska den extra bredden
+                                  användas till något. Här: var mappen hör
+                                  hemma, så man ser skillnad på två som heter
+                                  samma sak i olika grenar. */}
+                              {brett && sidoBredd > 300 && mappdjup(m.path) > 0 && (
+                                <span className="block truncate text-[10px] text-muted/50">
+                                  {m.path
+                                    .replace(/^INBOX[./]/, '')
+                                    .split(/[./]/)
+                                    .slice(0, -1)
+                                    .join(' › ')}
+                                </span>
+                              )}
+                            </span>
                             {synkarMapp === m.id
                               ? <span className="ml-auto shrink-0 text-[10px] text-accent-soft">hämtar…</span>
                               : (m.total_count ?? 0) > 0 && <span className="ml-auto shrink-0 text-[10px] text-muted/70">{m.total_count}</span>}
@@ -803,9 +865,14 @@ export default function Mail() {
         {/* Lista. Ryms bara en kolumn åt gången lämnar listan plats åt
             läsrutan när man öppnat ett mejl — som i vilken telefonklient
             som helst. */}
-        <div className={`w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-border bg-card lg:flex lg:w-88 xl:w-96 ${
-          vald ? 'hidden' : 'flex'
-        }`}>
+        <Delare onDra={(dx) => setSidoBredd((b) => klam(b + dx, 150, 460))} />
+
+        <div
+          style={brett ? { width: listBredd } : undefined}
+          className={`w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-border bg-card lg:flex lg:w-88 ${
+            vald ? 'hidden' : 'flex'
+          }`}
+        >
           {/* Åtgärdsrad när något är markerat */}
           {valda.size > 0 && (
             <div className="relative flex flex-wrap items-center gap-1 border-b border-border bg-accent/10 px-2 py-2">
@@ -908,6 +975,8 @@ export default function Mail() {
             <kbd className="ml-1 rounded border border-border bg-surface px-1">S</kbd> stjärna
           </p>
         </div>
+
+        <Delare onDra={(dx) => setListBredd((b) => klam(b + dx, 260, 760))} />
 
         {/* Läsruta */}
         <div className={`min-w-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card lg:block ${
