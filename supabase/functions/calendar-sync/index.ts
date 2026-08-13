@@ -159,8 +159,17 @@ async function synkaAnvandare(userId: string) {
         const attSpara = [];
         for (const e of poster) {
           if (e.status === "cancelled") {
+            // En flytt till en annan kalender ser ut som en avbokning HAR, i
+            // kallkalendern. Ligger det nagot i kon for raden har vi sjalva
+            // bett om flytten och Google har redan gjort den - da ar en
+            // radering fel svar. Utan de tva villkoren forsvann handelsen helt:
+            // malkalendern hamtas fore kallkalendern, sa dess ankomst hann
+            // konsumeras ur synkstrommen innan raden pekade dit, och sedan
+            // strok kallkalendern raden. Bada synktoken var da forbrukade, sa
+            // den kom aldrig tillbaka utan en full omhamtning.
             await admin.from("hub_events").delete()
-              .eq("calendar_id", kal.id).eq("external_id", e.id);
+              .eq("calendar_id", kal.id).eq("external_id", e.id)
+              .is("pending_op", null).is("pending_till_kalender", null);
             borttagna++;
             continue;
           }
