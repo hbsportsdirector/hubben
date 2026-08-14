@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { format, startOfWeek, addDays, addWeeks, differenceInCalendarWeeks, isAfter } from 'date-fns'
 import { sv } from 'date-fns/locale'
 
@@ -39,8 +39,18 @@ export default function Heatmap({ values, max = 1, color, unit = '' }: HeatmapPr
   const width = weekCount * (CELL + GAP)
   const height = 7 * (CELL + GAP) + LABEL_H
 
+  // Rutnätet är ~680 px brett och börjar för ett år sedan. Ryms det inte —
+  // och på en telefon gör det aldrig det — hamnar dagens datum utanför högerkanten,
+  // så det man ser när sidan öppnas är tomma rutor från i fjol. Börja i
+  // stället längst till höger, där de senaste veckorna finns.
+  const rullaRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = rullaRef.current
+    if (el) el.scrollLeft = el.scrollWidth
+  }, [width])
+
   return (
-    <div className="overflow-x-auto">
+    <div ref={rullaRef} className="overflow-x-auto">
       <svg width={width} height={height} role="img" aria-label="Årsöversikt">
         {monthLabels.map((m) => (
           <text key={m.week} x={m.week * (CELL + GAP)} y={10} fontSize="9" fill="#8b95ad" className="capitalize">

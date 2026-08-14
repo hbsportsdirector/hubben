@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from 'react'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { Link } from 'react-router-dom'
@@ -192,6 +192,68 @@ function Delare({ onDra }: { onDra: (dx: number) => void }) {
 }
 
 const klam = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
+
+/** Svep på en mejlrad: vänster lägger i papperskorgen, höger flaggar för svar.
+ *
+ *  Draget låses bara till vågrätt om rörelsen tydligt är vågrät. Gör den inte
+ *  det släpper vi gesten direkt och sidans lodräta scroll får den — annars
+ *  blir listan omöjlig att bläddra i, vilket är precis det fel som gör
+ *  hemsnickrade svep värre än inga svep alls. touch-action: pan-y talar om
+ *  samma sak för webbläsaren, så den slipper vänta på oss. */
+function SvepRad({ children, onVanster, onHoger }: {
+  children: ReactNode
+  onVanster: () => void
+  onHoger: () => void
+}) {
+  const [dx, setDx] = useState(0)
+  const start = useRef<{ x: number; y: number } | null>(null)
+  const vagratt = useRef(false)
+  const TROSKEL = 84
+
+  const slapp = () => {
+    if (dx <= -TROSKEL) onVanster()
+    else if (dx >= TROSKEL) onHoger()
+    start.current = null
+    vagratt.current = false
+    setDx(0)
+  }
+
+  return (
+    <div className="relative overflow-hidden">
+      {/* Ligger bakom raden och kommer fram i takt med draget */}
+      <div className="absolute inset-0 flex items-center justify-between px-4 text-xs font-medium" aria-hidden>
+        <span className={`text-good transition-opacity ${dx > 12 ? 'opacity-100' : 'opacity-0'}`}>↩️ Svara senare</span>
+        <span className={`text-bad transition-opacity ${dx < -12 ? 'opacity-100' : 'opacity-0'}`}>Radera 🗑️</span>
+      </div>
+      <div
+        className="relative bg-card"
+        style={{ transform: `translateX(${dx}px)`, transition: vagratt.current ? 'none' : 'transform 150ms', touchAction: 'pan-y' }}
+        onTouchStart={(e) => {
+          const t = e.touches[0]
+          start.current = { x: t.clientX, y: t.clientY }
+          vagratt.current = false
+        }}
+        onTouchMove={(e) => {
+          if (!start.current) return
+          const t = e.touches[0]
+          const dX = t.clientX - start.current.x
+          const dY = t.clientY - start.current.y
+          if (!vagratt.current) {
+            if (Math.abs(dX) < 12 && Math.abs(dY) < 12) return
+            // Lodrätt drag hör till scrollen, inte till oss
+            if (Math.abs(dY) >= Math.abs(dX)) { start.current = null; return }
+            vagratt.current = true
+          }
+          setDx(klam(dX, -132, 132))
+        }}
+        onTouchEnd={slapp}
+        onTouchCancel={slapp}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
 
 function visaTid(iso: string | null) {
   if (!iso) return ''
@@ -1011,8 +1073,12 @@ export default function Mail() {
                 const konto = kontoAv(m.account_id)
                 const markerad = valda.has(m.id)
                 return (
-                  <div
+                  <SvepRad
                     key={m.id}
+                    onVanster={() => flytta([m.id], undefined, 'trash')}
+                    onHoger={() => uppdatera(m.id, { reply_later: !m.reply_later })}
+                  >
+                  <div
                     className={`group/rad flex w-full items-start gap-2 border-l-2 border-b border-b-border/50 pl-2 pr-3 py-3 transition-colors ${
                       markerad ? 'border-l-accent bg-accent/15'
                         : valdId === m.id ? 'border-l-accent bg-accent/10' : 'border-l-transparent hover:bg-card-hover'
@@ -1065,6 +1131,7 @@ export default function Mail() {
                     </span>
                   </button>
                   </div>
+                  </SvepRad>
                 )
               })
             )}

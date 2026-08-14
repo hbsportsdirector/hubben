@@ -80,7 +80,58 @@ export default function Habits() {
       {habits.length === 0 ? (
         <Card><EmptyState emoji="🌱" text="Skapa din första vana — små steg varje dag!" /></Card>
       ) : (
-        <Card className="overflow-x-auto">
+        <>
+        {/* Telefon: ett kort per vana. Tabellen kräver 520 px — sju dagar plus
+            veckomål, svit och knappar får inte plats på 375 px — och tvingade
+            fram en sidledsscroll där man tappade bort vilken rad man bockade i. */}
+        <div className="space-y-3 md:hidden">
+          {habits.map((habit) => {
+            const weekCount = weekDays.filter((d) => logs.some((l) => l.habit_id === habit.id && l.log_date === format(d, 'yyyy-MM-dd'))).length
+            const s = streak(habit)
+            return (
+              <Card key={habit.id} className="!p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <span aria-hidden>{habit.emoji}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{habit.name}</span>
+                  <span className={`text-xs font-semibold ${weekCount >= habit.target_per_week ? 'text-good' : 'text-muted'}`}>
+                    {weekCount}/{habit.target_per_week}
+                  </span>
+                  {s > 0 && <span className="text-xs font-semibold">🔥 {s}</span>}
+                  <button onClick={() => { setEditHabit(habit); setModal(true) }} className="p-1 text-xs" aria-label={`Redigera ${habit.name}`}>✏️</button>
+                  <button onClick={() => remove(habit)} className="p-1 text-xs" aria-label={`Ta bort ${habit.name}`}>🗑️</button>
+                </div>
+                <div className="flex justify-between gap-1">
+                  {weekDays.map((d) => {
+                    const done = logs.some((l) => l.habit_id === habit.id && l.log_date === format(d, 'yyyy-MM-dd'))
+                    const future = isAfter(d, today)
+                    const idag = format(d, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')
+                    return (
+                      <div key={d.toISOString()} className="flex flex-1 flex-col items-center gap-1">
+                        <span className={`text-[10px] capitalize ${idag ? 'font-bold text-accent-soft' : 'text-muted'}`}>
+                          {format(d, 'EEEEE', { locale: sv })}
+                        </span>
+                        <button
+                          onClick={() => toggle(habit, d)}
+                          disabled={future}
+                          className={`h-9 w-full rounded-lg border-2 text-xs text-white transition-all ${
+                            done ? 'border-transparent' : future ? 'border-border opacity-30' : 'border-border'
+                          }`}
+                          style={done ? { background: habit.color } : undefined}
+                          aria-label={`${habit.name} ${format(d, 'EEEE d MMM', { locale: sv })}${done ? ' – klar' : ''}`}
+                        >
+                          {done && '✓'}
+                        </button>
+                        <span className="text-[9px] text-muted/70">{format(d, 'd/M')}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+
+        <Card className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-130">
             <thead>
               <tr>
@@ -148,6 +199,7 @@ export default function Habits() {
             </tbody>
           </table>
         </Card>
+        </>
       )}
 
       {habits.length > 0 && (
