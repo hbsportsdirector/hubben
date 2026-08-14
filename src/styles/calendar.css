@@ -166,18 +166,29 @@
   font-size: 0.85rem;
 }
 
+/* Hover får INTE måla över händelsens färg. Textfärgen är vald för just den
+   färgen, så byter bakgrunden blir texten oläsbar mitt i en pekning. */
 .rbc-agenda-view table.rbc-agenda-table tbody > tr:hover {
-  background: var(--color-card-hover);
+  filter: brightness(1.08);
 }
 
+/* react-big-calendar lägger eventPropGetter-stilen på HELA raden i agendan,
+   inte bara på händelsecellen. Datum och tid låg därför i grått ovanpå
+   kalenderns egen färg — och flera av Googles färger är ljusa, så grått mot
+   ljuslila gick helt enkelt inte att läsa på telefonen.
+
+   Cellerna ärver nu radens textfärg, som Calendar.tsx räknar fram ur
+   bakgrundens luminans. Datum och tid tonas ned med opacitet i stället för
+   med en egen färg, så de förblir läsbara oavsett kalenderfärg. */
 .rbc-agenda-date-cell,
 .rbc-agenda-time-cell {
-  color: var(--color-muted);
+  color: inherit;
+  opacity: 0.78;
   white-space: nowrap;
 }
 
 .rbc-agenda-event-cell {
-  color: var(--color-ink);
+  color: inherit;
 }
 
 /* --- Markering av nytt tidsspann --- */

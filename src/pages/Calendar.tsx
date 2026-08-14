@@ -269,6 +269,9 @@ export default function Calendar() {
       await supabase.from('hub_events')
         .update({ pending_op: 'radera', pending_scope: rad.series_master_id ? omfattning : null, pending_nasta: new Date().toISOString(), pending_forsok: 0 })
         .eq('id', id)
+      // Samma sak här: raden göms av vyns filter så fort vi läst om, och
+      // behöver inte vänta på att Google hunnit släppa den.
+      load()
       await betaAvKon()
     } else {
       await supabase.from('hub_events').delete().eq('id', id)
@@ -387,7 +390,7 @@ export default function Calendar() {
               }
               resizable
               components={{ toolbar: SwedishToolbar }}
-              eventPropGetter={(ev) => ({ style: { backgroundColor: ev.color } })}
+              eventPropGetter={(ev) => ({ style: { backgroundColor: ev.color, color: lasbarText(ev.color) } })}
               dayLayoutAlgorithm="no-overlap"
               style={{ height: '100%' }}
             />
@@ -406,11 +409,40 @@ export default function Calendar() {
         initialStart={slotStart}
         initialEnd={slotEnd}
         kalendrar={kalendrar}
-        onSaved={(tillGoogle) => (tillGoogle ? betaAvKon() : load())}
+        // Läs om direkt, och låt kön mot Google jobba ifatt efteråt. Förut
+        // väntade vyn på hela rundan till Google — token, skapa, svar — innan
+        // den nya händelsen dök upp. På mobilnät blev det flera sekunder där
+        // det såg ut som att ingenting hänt, så man sparade igen eller laddade
+        // om sidan. Raden finns i databasen redan, så det finns inget att vänta
+        // på; betaAvKon läser om en gång till när Google svarat.
+        onSaved={(tillGoogle) => { load(); if (tillGoogle) betaAvKon() }}
         onDelete={remove}
       />
     </div>
   )
+}
+
+/** Svart eller vit text, beroende på hur ljus bakgrunden är.
+ *
+ *  Färgerna kommer från Google och flera av dem är ljusa — #cd74e6 (ljuslila),
+ *  #9fe1e7 (blekt turkos), #cabdbf (ljusgrå). Vit text på dem går knappt att
+ *  läsa, och i agendavyn ärvde datum- och tidcellerna dessutom grått, vilket
+ *  var helt oläsbart på telefonen.
+ *
+ *  Luminansen räknas enligt WCAG: kanalerna linjäriseras innan de vägs ihop,
+ *  eftersom sRGB-värdena är gammakodade och ett rakt medelvärde gör mellanljusa
+ *  färger för mörka. Tröskeln 0,25 håller mättade mellanfärger vita — indigo
+ *  och blått ser ut som förut — men vänder de ljusa till mörk text. */
+function lasbarText(bakgrund: string): string {
+  const h = (bakgrund || '').replace('#', '')
+  const hex = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return '#fff'
+  const kanal = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+  }
+  const luminans = 0.2126 * kanal(0) + 0.7152 * kanal(2) + 0.0722 * kanal(4)
+  return luminans > 0.25 ? '#10141f' : '#fff'
 }
 
 function SwedishToolbar({ label, onNavigate, onView, view, date }: ToolbarProps<CalEvent>) {
