@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { getUserId } from '../lib/data'
+import { tolkaText, beskrivTolkning } from '../lib/tolkaText'
 
 interface Command {
   label: string
@@ -7,6 +10,16 @@ interface Command {
   keywords: string
   hint?: string
   action: (navigate: ReturnType<typeof useNavigate>) => void
+}
+
+/** Ett förslag i listan — antingen ett kommando eller en infångning. */
+interface Post {
+  nyckel: string
+  emoji: string
+  text: string
+  detalj?: string
+  hint?: string
+  kor: () => void | Promise<void>
 }
 
 const COMMANDS: Command[] = [
@@ -32,6 +45,8 @@ export default function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
+  const [sparar, setSparar] = useState(false)
+  const [fel, setFel] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
 
@@ -42,6 +57,7 @@ export default function CommandPalette() {
         setOpen((o) => !o)
         setQuery('')
         setSelected(0)
+        setFel(null)
       }
       if (e.key === 'Escape') setOpen(false)
     }
@@ -59,10 +75,112 @@ export default function CommandPalette() {
     return COMMANDS.filter((c) => (c.label + ' ' + c.keywords).toLowerCase().includes(q))
   }, [query])
 
-  function run(cmd: Command) {
-    setOpen(false)
-    cmd.action(navigate)
+  const tolkning = useMemo(() => tolkaText(query), [query])
+  const tid = beskrivTolkning(tolkning)
+
+  /** Skriver först, navigerar sedan dit saken hamnade — man ska se resultatet,
+   *  inte lita på att det gick. Går det fel står felet kvar i rutan; förr i
+   *  Hubben stängdes rutan ändå och raden bara försvann. */
+  async function skriv(gor: () => Promise<string | null>, vart: string) {
+    if (sparar) return
+    setSparar(true)
+    setFel(null)
+    try {
+      const problem = await gor()
+      if (problem) { setFel(problem); return }
+      setOpen(false)
+      navigate(vart)
+    } catch (e) {
+      setFel(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSparar(false)
+    }
   }
+
+  const skapaUppgift = () => skriv(async () => {
+    const { error } = await supabase.from('hub_tasks').insert({
+      user_id: await getUserId(),
+      title: tolkning.titel,
+      due_date: tolkning.datum,
+      priority: 2,
+    })
+    return error?.message ?? null
+  }, '/uppgifter')
+
+  const skapaAnteckning = () => skriv(async () => {
+    const { error } = await supabase.from('hub_notes').insert({
+      user_id: await getUserId(),
+      title: tolkning.titel,
+      content: '',
+    })
+    return error?.message ?? null
+  }, '/anteckningar')
+
+  const skapaHandelse = () => skriv(async () => {
+    // Samma förval som i kalendern: den kalender man faktiskt tittar i, annars
+    // den första påslagna. Har man ingen alls blir händelsen lokal.
+    const { data: kalendrar } = await supabase
+      .from('hub_calendars').select('id, color, synlig').eq('aktiv', true).order('namn')
+    const kal = kalendrar?.find((k) => k.synlig) ?? kalendrar?.[0] ?? null
+
+    const datum = tolkning.datum ?? new Date().toISOString().slice(0, 10)
+    // Heldagar lagras som midnatt UTC, precis som de vi hämtar från Google —
+    // med lokal midnatt pekar datumdelen på fel dag när den skickas tillbaka.
+    const start = tolkning.start ? new Date(`${datum}T${tolkning.start}:00`) : new Date(`${datum}T00:00:00Z`)
+    const slut = tolkning.slut ? new Date(`${datum}T${tolkning.slut}:00`) : null
+
+    const { error } = await supabase.from('hub_events').insert({
+      user_id: await getUserId(),
+      title: tolkning.titel,
+      starts_at: start.toISOString(),
+      ends_at: slut ? slut.toISOString() : null,
+      all_day: !tolkning.start,
+      color: kal?.color ?? '#6366f1',
+      calendar_id: kal?.id ?? null,
+      // Kalendersidan betar av kön när den öppnas, och dit navigerar vi nu.
+      ...(kal ? { pending_op: 'skapa', pending_nasta: new Date().toISOString(), pending_forsok: 0 } : {}),
+    })
+    return error?.message ?? null
+  }, '/kalender')
+
+  /** Fritext eller kommando? Kommandon är korta ("kal", "vecka"); det man
+   *  fångar in är längre eller bär ett datum. Tre ord är gränsen som gör att
+   *  "Ring tandläkaren imorgon" blir en uppgift medan "kalender" navigerar. */
+  const infangningar = useMemo<Post[]>(() => {
+    if (!tolkning.titel) return []
+    const uppgift: Post = {
+      nyckel: 'ny-uppgift', emoji: '✅', hint: 'skapa',
+      text: `Uppgift: ${tolkning.titel}`,
+      detalj: tolkning.datum ? `deadline ${tid}` : undefined,
+      kor: skapaUppgift,
+    }
+    const handelse: Post = {
+      nyckel: 'ny-handelse', emoji: '📅', hint: 'skapa',
+      text: `Händelse: ${tolkning.titel}`,
+      detalj: tid ?? undefined,
+      kor: skapaHandelse,
+    }
+    const anteckning: Post = {
+      nyckel: 'ny-anteckning', emoji: '📝', hint: 'skapa',
+      text: `Anteckning: ${tolkning.titel}`,
+      kor: skapaAnteckning,
+    }
+    // Står det ett klockslag är det nästan alltid något som ska in i kalendern
+    return tolkning.start ? [handelse, uppgift, anteckning] : [uppgift, handelse, anteckning]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tolkning, tid])
+
+  const poster = useMemo<Post[]>(() => {
+    const kommandon: Post[] = filtered.map((c) => ({
+      nyckel: 'cmd-' + c.label, emoji: c.emoji, text: c.label, hint: c.hint,
+      kor: () => { setOpen(false); c.action(navigate) },
+    }))
+    if (!query.trim()) return kommandon
+    const ord = query.trim().split(/\s+/).length
+    const arFritext = ord >= 3 || !!tolkning.datum || !!tolkning.start || kommandon.length === 0
+    return arFritext ? [...infangningar, ...kommandon] : [...kommandon, ...infangningar]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, infangningar, query, tolkning])
 
   if (!open) return null
 
@@ -75,31 +193,37 @@ export default function CommandPalette() {
           value={query}
           onChange={(e) => { setQuery(e.target.value); setSelected(0) }}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((s) => Math.min(s + 1, filtered.length - 1)) }
+            if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((s) => Math.min(s + 1, poster.length - 1)) }
             if (e.key === 'ArrowUp') { e.preventDefault(); setSelected((s) => Math.max(s - 1, 0)) }
-            if (e.key === 'Enter' && filtered[selected]) run(filtered[selected])
+            if (e.key === 'Enter' && poster[selected]) { e.preventDefault(); void poster[selected].kor() }
           }}
-          placeholder="Skriv ett kommando eller sök…"
+          placeholder="Skriv vad som helst — eller ett kommando…"
           className="w-full border-b border-border bg-transparent px-4 py-3.5 text-sm text-ink placeholder:text-muted/60 outline-none"
         />
         <ul className="max-h-80 overflow-y-auto p-2">
-          {filtered.length === 0 && <li className="px-3 py-6 text-center text-sm text-muted">Inga träffar</li>}
-          {filtered.map((cmd, i) => (
-            <li key={cmd.label}>
+          {poster.length === 0 && <li className="px-3 py-6 text-center text-sm text-muted">Inga träffar</li>}
+          {poster.map((p, i) => (
+            <li key={p.nyckel}>
               <button
-                onClick={() => run(cmd)}
+                onClick={() => void p.kor()}
                 onMouseEnter={() => setSelected(i)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+                disabled={sparar}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors disabled:opacity-50 ${
                   i === selected ? 'bg-accent/15 text-ink' : 'text-muted'
                 }`}
               >
-                <span aria-hidden>{cmd.emoji}</span>
-                <span className="flex-1">{cmd.label}</span>
-                {cmd.hint && <span className="text-[10px] uppercase tracking-wider text-muted/70">{cmd.hint}</span>}
+                <span aria-hidden>{p.emoji}</span>
+                <span className="min-w-0 flex-1 truncate">{p.text}</span>
+                {/* Det tolken förstod, framme innan man trycker Enter */}
+                {p.detalj && <span className="shrink-0 text-[11px] text-accent-soft">{p.detalj}</span>}
+                {p.hint && <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted/70">{p.hint}</span>}
               </button>
             </li>
           ))}
         </ul>
+        {fel && (
+          <p className="border-t border-border bg-bad/10 px-4 py-2 text-xs text-bad">Sparades inte: {fel}</p>
+        )}
         <div className="border-t border-border px-4 py-2 text-[10px] text-muted">
           ↑↓ navigera · Enter välj · Esc stäng
         </div>

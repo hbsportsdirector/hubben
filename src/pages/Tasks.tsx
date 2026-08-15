@@ -309,7 +309,16 @@ function TaskModal({ open, onClose, task, projects, onSaved }: {
       <div className="space-y-4">
         <div>
           <Label>Titel</Label>
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Vad ska göras?" autoFocus />
+          {/* Enter sparar. Resten av fälten är valfria, och att behöva flytta
+              handen till muspekaren för "Ring tandläkaren" är precis den
+              friktion som gör att man låter bli att skriva ner saker. */}
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save() } }}
+            placeholder="Vad ska göras?"
+            autoFocus
+          />
         </div>
         <div>
           <Label>Anteckning</Label>
