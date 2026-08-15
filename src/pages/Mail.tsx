@@ -193,6 +193,27 @@ function Delare({ onDra }: { onDra: (dx: number) => void }) {
 
 const klam = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
 
+/** Träffutdraget från hub_sok_traffar. Styrtecken i stället för < > runt
+ *  träffen — mejltext innehåller allt möjligt, men aldrig chr(2)/chr(3), så
+ *  utdraget kan renderas som text utan att någonting behöver tolkas som HTML. */
+const TRAFF_START = '\u0002'
+const TRAFF_SLUT = '\u0003'
+
+function markeraTraff(raa: string) {
+  // Mejltext är full av radbrytningar och indrag; på en rad blir det luckor
+  const text = raa.replace(/\s+/g, ' ').trim()
+  return text.split(TRAFF_START).flatMap((bit, i) => {
+    if (i === 0) return bit ? [<span key={`f${i}`}>{bit}</span>] : []
+    const delning = bit.indexOf(TRAFF_SLUT)
+    const traffad = delning < 0 ? bit : bit.slice(0, delning)
+    const efter = delning < 0 ? '' : bit.slice(delning + 1)
+    return [
+      <mark key={`m${i}`} className="rounded bg-accent/30 px-0.5 text-ink">{traffad}</mark>,
+      efter ? <span key={`e${i}`}>{efter}</span> : null,
+    ].filter(Boolean)
+  })
+}
+
 /** Svep på en mejlrad: vänster lägger i papperskorgen, höger flaggar för svar.
  *
  *  Draget låses bara till vågrätt om rörelsen tydligt är vågrät. Gör den inte
@@ -273,6 +294,8 @@ export default function Mail() {
   const [mappSok, setMappSok] = useState('')
   const [sok, setSok] = useState('')
   const [mejl, setMejl] = useState<Mejl[]>([])
+  // msg_id -> utdrag ur brödtexten med träffen markerad. Bara vid sökning.
+  const [traffar, setTraffar] = useState<Record<string, string>>({})
   const [konton, setKonton] = useState<Konto[]>([])
   const [mappar, setMappar] = useState<Mapp[]>([])
   const [valdId, setValdId] = useState<string | null>(null)
@@ -533,6 +556,29 @@ export default function Mail() {
     setMejl((data ?? []) as Mejl[])
     setLaddar(false)
   }, [lada, kontoFilter, mappFilter, sok, dataVersion])
+
+  /** Varför kom det här mejlet med? Svensk stemming slår ihop serier/serien,
+   *  så en träff kan sitta i finstilt text långt ner i ett reklammejl. Utan
+   *  utdraget måste man öppna mejlet och leta för att förstå.
+   *
+   *  Körs som en egen fråga efter listan, inte som en del av den: utdraget är
+   *  trevligt att ha men får aldrig fördröja att mejlen dyker upp. */
+  useEffect(() => {
+    const fraga = sok.trim()
+    if (!fraga || mejl.length === 0) { setTraffar({}); return }
+    let avbruten = false
+    ;(async () => {
+      const { data } = await supabase.rpc('hub_sok_traffar', {
+        p_ids: mejl.map((m) => m.id),
+        p_fraga: fraga,
+      })
+      if (avbruten) return
+      const karta: Record<string, string> = {}
+      for (const r of (data ?? []) as { id: string; traff: string }[]) karta[r.id] = r.traff
+      setTraffar(karta)
+    })()
+    return () => { avbruten = true }
+  }, [mejl, sok])
 
   // Länk från en uppgift: ?mejl=<id>. Mejlet kan ligga i en annan låda eller
   // mapp än den man står i, så det hämtas separat och läggs till i listan —
@@ -1127,7 +1173,14 @@ export default function Mail() {
                         )}
                         {m.has_attachments && <span className={`shrink-0 text-[11px] text-muted ${m.vantar ? '' : 'ml-auto'}`} title="Har bilagor">📎</span>}
                       </span>
-                      <span className="mt-0.5 block truncate text-[11px] text-muted/70">{part.adress || (part.prefix ? '' : m.from_email)}</span>
+                      {/* Vid sökning ersätts adressraden av stället i mejlet
+                          som gav träffen. Utan den fick man öppna mejlet och
+                          leta för att förstå varför det kom med. */}
+                      {traffar[m.id] ? (
+                        <span className="mt-0.5 block truncate text-[11px] text-muted/70">{markeraTraff(traffar[m.id])}</span>
+                      ) : (
+                        <span className="mt-0.5 block truncate text-[11px] text-muted/70">{part.adress || (part.prefix ? '' : m.from_email)}</span>
+                      )}
                     </span>
                   </button>
                   </div>
