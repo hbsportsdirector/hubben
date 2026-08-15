@@ -102,15 +102,22 @@ async function imapLas(c: Deno.Conn, tag: string, ms = 30000) {
   const buf = new Uint8Array(16384);
   let ut = "";
   const slut = Date.now() + ms;
-  const re = new RegExp("^" + tag + " (OK|NO|BAD)", "mi");
+  // "+" ar IMAP:s fortsatt-svar, inte en tagg. Monstret byggdes forr alltid,
+  // aven da - och blev /^+ (OK|NO|BAD)/, som ar ogiltigt eftersom + inte har
+  // nagot att upprepa. Det kastade innan en enda byte lasts, sa APPEND till
+  // Skickat foll varje gang: mejlet gick ivag men kopian blev aldrig av.
+  // mail-drain och mail-move-x undgick det genom att bygga monstret forst i
+  // else-grenen; har lag det utanfor.
+  const vantarFortsattning = tag === "+";
+  const re = vantarFortsattning ? null : new RegExp("^" + tag + " (OK|NO|BAD)", "mi");
   while (Date.now() < slut) {
     let t: number | undefined;
     const n = await Promise.race([c.read(buf), new Promise<null>((r) => { t = setTimeout(() => r(null), Math.max(300, slut - Date.now())); })]);
     if (t !== undefined) clearTimeout(t);
     if (n === null || n === 0) break;
     ut += dec.decode(buf.subarray(0, n as number));
-    if (tag === "+") { if (/^\+/m.test(ut)) break; }
-    else if (re.test(ut)) break;
+    if (vantarFortsattning) { if (/^\+/m.test(ut)) break; }
+    else if (re!.test(ut)) break;
   }
   return ut;
 }
