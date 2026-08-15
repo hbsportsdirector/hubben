@@ -41,6 +41,9 @@ export interface HubHabit {
   color: string
   target_per_week: number
   archived: boolean
+  /** Semesterlage: veckor helt inom pausen bryter inte sviten */
+  paused_from?: string | null
+  paused_to?: string | null
   created_at: string
 }
 
@@ -49,6 +52,8 @@ export interface HubHabitLog {
   habit_id: string
   user_id: string
   log_date: string
+  /** klar = utfort. overhoppad = medvetet bortvalt, ska inte se ut som missat. */
+  status?: 'klar' | 'overhoppad'
 }
 
 export interface HubEvent {

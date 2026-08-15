@@ -35,18 +35,42 @@ export default function Habits() {
 
   useEffect(() => { load() }, [load])
 
+  /** Tre lägen i stället för två: tom → klar → överhoppad → tom.
+   *
+   *  "Överhoppad" är inte samma sak som missad. Ett medvetet bortval ska inte
+   *  se ut som ett misslyckande i rutnätet, och det är skillnaden som gör att
+   *  man vågar bocka i sanningen i stället för att låta bli att öppna appen. */
   async function toggle(habit: HubHabit, day: Date) {
     if (isAfter(day, today)) return
     const dayStr = format(day, 'yyyy-MM-dd')
     const existing = logs.find((l) => l.habit_id === habit.id && l.log_date === dayStr)
-    if (existing) {
-      setLogs(logs.filter((l) => l.id !== existing.id))
-      await supabase.from('hub_habit_logs').delete().eq('id', existing.id)
-    } else {
+
+    if (!existing) {
       const userId = await getUserId()
-      const { data } = await supabase.from('hub_habit_logs').insert({ user_id: userId, habit_id: habit.id, log_date: dayStr }).select().single()
+      const { data } = await supabase.from('hub_habit_logs')
+        .insert({ user_id: userId, habit_id: habit.id, log_date: dayStr, status: 'klar' })
+        .select().single()
       if (data) setLogs((prev) => [...prev, data])
+      return
     }
+    if ((existing.status ?? 'klar') === 'klar') {
+      setLogs(logs.map((l) => (l.id === existing.id ? { ...l, status: 'overhoppad' } : l)))
+      await supabase.from('hub_habit_logs').update({ status: 'overhoppad' }).eq('id', existing.id)
+      return
+    }
+    setLogs(logs.filter((l) => l.id !== existing.id))
+    await supabase.from('hub_habit_logs').delete().eq('id', existing.id)
+  }
+
+  const arKlar = (habitId: string, dag: Date) =>
+    logs.some((l) => l.habit_id === habitId && l.log_date === format(dag, 'yyyy-MM-dd') && (l.status ?? 'klar') === 'klar')
+  const arOverhoppad = (habitId: string, dag: Date) =>
+    logs.some((l) => l.habit_id === habitId && l.log_date === format(dag, 'yyyy-MM-dd') && l.status === 'overhoppad')
+
+  const arPausad = (habit: HubHabit, dag: Date) => {
+    if (!habit.paused_to) return false
+    const d = format(dag, 'yyyy-MM-dd')
+    return d <= habit.paused_to && (!habit.paused_from || d >= habit.paused_from)
   }
 
   async function remove(habit: HubHabit) {
@@ -54,18 +78,38 @@ export default function Habits() {
     load()
   }
 
+  /** Sviten räknar VECKOR där veckomålet nåddes — inte obrutna dagar.
+   *
+   *  Förut nollade ett enda missat dygn allt, trots att target_per_week fanns
+   *  hela tiden. Ett veckomål på 3 pass betyder att fyra lediga dagar är
+   *  planen, inte ett misslyckande. Och en missad dag påverkar inte
+   *  vanebildningen i sig — det är nollställningen som får folk att sluta.
+   *
+   *  Innevarande vecka räknas bara om målet redan nåtts, annars skulle sviten
+   *  se ut att brytas varje måndag morgon. Veckor helt inom en paus hoppas
+   *  över utan att bryta kedjan. */
+  function veckansKlara(habit: HubHabit, mandag: Date): number {
+    return Array.from({ length: 7 }, (_, i) => addDays(mandag, i))
+      .filter((d) => arKlar(habit.id, d)).length
+  }
+
   function streak(habit: HubHabit): number {
-    let count = 0
-    let day = today
-    // Räkna bakåt från idag (eller igår om idag inte är loggad än)
-    if (!logs.some((l) => l.habit_id === habit.id && l.log_date === format(day, 'yyyy-MM-dd'))) {
-      day = subDays(day, 1)
+    const mal = Math.max(1, habit.target_per_week)
+    let antal = 0
+    let mandag = weekStart
+
+    if (veckansKlara(habit, mandag) < mal) mandag = subDays(mandag, 7)
+
+    // Femtiotvå veckor bakåt räcker; längre tillbaka finns ingen data ändå.
+    for (let i = 0; i < 52; i++) {
+      const helaVeckanPausad = Array.from({ length: 7 }, (_, d) => addDays(mandag, d))
+        .every((d) => arPausad(habit, d))
+      if (helaVeckanPausad) { mandag = subDays(mandag, 7); continue }
+      if (veckansKlara(habit, mandag) < mal) break
+      antal++
+      mandag = subDays(mandag, 7)
     }
-    while (logs.some((l) => l.habit_id === habit.id && l.log_date === format(day, 'yyyy-MM-dd'))) {
-      count++
-      day = subDays(day, 1)
-    }
-    return count
+    return antal
   }
 
   if (loading) return <Spinner />
@@ -86,7 +130,7 @@ export default function Habits() {
             fram en sidledsscroll där man tappade bort vilken rad man bockade i. */}
         <div className="space-y-3 md:hidden">
           {habits.map((habit) => {
-            const weekCount = weekDays.filter((d) => logs.some((l) => l.habit_id === habit.id && l.log_date === format(d, 'yyyy-MM-dd'))).length
+            const weekCount = weekDays.filter((d) => arKlar(habit.id, d)).length
             const s = streak(habit)
             return (
               <Card key={habit.id} className="!p-4">
@@ -96,13 +140,16 @@ export default function Habits() {
                   <span className={`text-xs font-semibold ${weekCount >= habit.target_per_week ? 'text-good' : 'text-muted'}`}>
                     {weekCount}/{habit.target_per_week}
                   </span>
-                  {s > 0 && <span className="text-xs font-semibold">🔥 {s}</span>}
+                  {/* Veckor med målet nått, inte obrutna dagar */}
+                  {s > 0 && <span className="text-xs font-semibold" title={`${s} veckor i rad med målet nått`}>🔥 {s} v</span>}
+                  {arPausad(habit, today) && <span className="text-xs text-muted" title={`Pausad t.o.m. ${habit.paused_to}`}>⏸</span>}
                   <button onClick={() => { setEditHabit(habit); setModal(true) }} className="p-1 text-xs" aria-label={`Redigera ${habit.name}`}>✏️</button>
                   <button onClick={() => remove(habit)} className="p-1 text-xs" aria-label={`Ta bort ${habit.name}`}>🗑️</button>
                 </div>
                 <div className="flex justify-between gap-1">
                   {weekDays.map((d) => {
-                    const done = logs.some((l) => l.habit_id === habit.id && l.log_date === format(d, 'yyyy-MM-dd'))
+                    const done = arKlar(habit.id, d)
+                    const skipped = arOverhoppad(habit.id, d)
                     const future = isAfter(d, today)
                     const idag = format(d, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')
                     return (
@@ -114,12 +161,14 @@ export default function Habits() {
                           onClick={() => toggle(habit, d)}
                           disabled={future}
                           className={`h-9 w-full rounded-lg border-2 text-xs text-white transition-all ${
-                            done ? 'border-transparent' : future ? 'border-border opacity-30' : 'border-border'
+                            done ? 'border-transparent'
+                              : skipped ? 'border-dashed border-muted/50 text-muted'
+                              : future ? 'border-border opacity-30' : 'border-border'
                           }`}
                           style={done ? { background: habit.color } : undefined}
-                          aria-label={`${habit.name} ${format(d, 'EEEE d MMM', { locale: sv })}${done ? ' – klar' : ''}`}
+                          aria-label={`${habit.name} ${format(d, 'EEEE d MMM', { locale: sv })}${done ? ' – klar' : skipped ? ' – överhoppad' : ''}`}
                         >
-                          {done && '✓'}
+                          {done ? '✓' : skipped ? '–' : ''}
                         </button>
                         <span className="text-[9px] text-muted/70">{format(d, 'd/M')}</span>
                       </div>
@@ -152,7 +201,7 @@ export default function Habits() {
             </thead>
             <tbody>
               {habits.map((habit) => {
-                const weekCount = weekDays.filter((d) => logs.some((l) => l.habit_id === habit.id && l.log_date === format(d, 'yyyy-MM-dd'))).length
+                const weekCount = weekDays.filter((d) => arKlar(habit.id, d)).length
                 const s = streak(habit)
                 return (
                   <tr key={habit.id} className="group border-t border-border">
@@ -161,7 +210,8 @@ export default function Habits() {
                       <span className="text-sm font-medium">{habit.name}</span>
                     </td>
                     {weekDays.map((d) => {
-                      const done = logs.some((l) => l.habit_id === habit.id && l.log_date === format(d, 'yyyy-MM-dd'))
+                      const done = arKlar(habit.id, d)
+                      const skipped = arOverhoppad(habit.id, d)
                       const future = isAfter(d, today)
                       return (
                         <td key={d.toISOString()} className="py-3 text-center">
@@ -169,12 +219,14 @@ export default function Habits() {
                             onClick={() => toggle(habit, d)}
                             disabled={future}
                             className={`h-7 w-7 rounded-lg border-2 text-xs text-white transition-all ${
-                              done ? 'border-transparent' : future ? 'border-border opacity-30' : 'border-border hover:border-muted'
+                              done ? 'border-transparent'
+                                : skipped ? 'border-dashed border-muted/50 text-muted'
+                                : future ? 'border-border opacity-30' : 'border-border hover:border-muted'
                             }`}
                             style={done ? { background: habit.color } : undefined}
-                            aria-label={`${habit.name} ${format(d, 'EEEE d MMM', { locale: sv })}${done ? ' – klar' : ''}`}
+                            aria-label={`${habit.name} ${format(d, 'EEEE d MMM', { locale: sv })}${done ? ' – klar' : skipped ? ' – överhoppad' : ''}`}
                           >
-                            {done && '✓'}
+                            {done ? '✓' : skipped ? '–' : ''}
                           </button>
                         </td>
                       )
@@ -185,7 +237,9 @@ export default function Habits() {
                       </span>
                     </td>
                     <td className="py-3 text-center">
-                      <span className="text-sm font-semibold">{s > 0 ? `🔥 ${s}` : '–'}</span>
+                      <span className="text-sm font-semibold" title={s > 0 ? `${s} veckor i rad med målet nått` : undefined}>
+                        {arPausad(habit, today) ? '⏸' : s > 0 ? `🔥 ${s} v` : '–'}
+                      </span>
                     </td>
                     <td className="py-3 text-right">
                       <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -225,13 +279,14 @@ export default function Habits() {
           </div>
           {(() => {
             const habit = habits.find((h) => h.id === (heatmapHabit ?? habits[0].id)) ?? habits[0]
-            const habitLogs = logs.filter((l) => l.habit_id === habit.id)
+            // Överhoppade dagar färgas inte — heatmapen ska visa vad man gjort
+            const habitLogs = logs.filter((l) => l.habit_id === habit.id && (l.status ?? 'klar') === 'klar')
             const values = new Map(habitLogs.map((l) => [l.log_date, 1]))
             return (
               <>
                 <Heatmap values={values} color={habit.color} />
                 <p className="mt-2 text-xs text-muted">
-                  {habitLogs.length} dagar senaste året · nuvarande svit {streak(habit)} {streak(habit) === 1 ? 'dag' : 'dagar'}
+                  {habitLogs.length} dagar senaste året · nuvarande svit {streak(habit)} {streak(habit) === 1 ? 'vecka' : 'veckor'} med målet nått
                 </p>
               </>
             )
@@ -249,17 +304,25 @@ function HabitModal({ open, onClose, habit, onSaved }: { open: boolean; onClose:
   const [emoji, setEmoji] = useState(EMOJIS[0])
   const [color, setColor] = useState(COLORS[0])
   const [target, setTarget] = useState(7)
+  const [pausadTill, setPausadTill] = useState('')
 
   useEffect(() => {
     setName(habit?.name ?? '')
     setEmoji(habit?.emoji ?? EMOJIS[0])
     setColor(habit?.color ?? COLORS[0])
     setTarget(habit?.target_per_week ?? 7)
+    setPausadTill(habit?.paused_to ?? '')
   }, [habit, open])
 
   async function save() {
     if (!name.trim()) return
-    const payload = { name: name.trim(), emoji, color, target_per_week: target }
+    // Pausen börjar idag och slutar det datum man valt. Ett fält räcker —
+    // "pausa bakåt i tiden" är inte ett behov någon har.
+    const payload = {
+      name: name.trim(), emoji, color, target_per_week: target,
+      paused_to: pausadTill || null,
+      paused_from: pausadTill ? (habit?.paused_from ?? format(new Date(), 'yyyy-MM-dd')) : null,
+    }
     if (habit) {
       await supabase.from('hub_habits').update(payload).eq('id', habit.id)
     } else {
@@ -308,6 +371,19 @@ function HabitModal({ open, onClose, habit, onSaved }: { open: boolean; onClose:
         <div>
           <Label>Mål per vecka: {target} dagar</Label>
           <input type="range" min={1} max={7} value={target} onChange={(e) => setTarget(Number(e.target.value))} className="w-full accent-(--color-accent)" />
+          <p className="mt-1 text-xs text-muted">Sviten räknar veckor där målet nåddes — inte obrutna dagar.</p>
+        </div>
+        <div>
+          <Label>Pausad till och med</Label>
+          <div className="flex gap-2">
+            <Input type="date" value={pausadTill} onChange={(e) => setPausadTill(e.target.value)} />
+            {pausadTill && (
+              <Button variant="ghost" onClick={() => setPausadTill('')}>Avbryt paus</Button>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            Semester eller skada? Veckor inom pausen bryter inte sviten.
+          </p>
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="ghost" onClick={onClose}>Avbryt</Button>
