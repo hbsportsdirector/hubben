@@ -150,6 +150,20 @@ export default function Layout({ userEmail, children }: { userEmail: string; chi
       )}
 
       {/* Bottennav (mobil) */}
+      {/* Snabbinfångning (mobil). Ctrl+K finns inte på en telefon, och det är
+          just där man vill kunna skriva ner något på tre sekunder. Egen knapp
+          ovanför navet i stället för en sjätte trång plats i det.
+          Göms när merluckan är uppe, annars ligger den ovanpå den. */}
+      {!merOppen && (
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('hubben:palett'))}
+          aria-label="Skriv in något nytt"
+          className="fixed right-4 bottom-[calc(4.9rem+env(safe-area-inset-bottom))] z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-2xl text-white shadow-[0_6px_20px_rgba(0,0,0,0.45)] active:bg-accent-soft md:hidden"
+        >
+          <span aria-hidden>+</span>
+        </button>
+      )}
+
       {/* data-bottennav: mejlvyn mäter den här för att veta hur högt den får
           bli. Höjden beror på telefonens safe-area och går inte att räkna ut
           i förväg. */}

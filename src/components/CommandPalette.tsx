@@ -61,8 +61,21 @@ export default function CommandPalette() {
       }
       if (e.key === 'Escape') setOpen(false)
     }
+    // Telefonen har ingen Ctrl+K. Snabbknappen i skalet ropar hit i stället —
+    // ett fönsterhändelse i stället för context, så paletten fortfarande äger
+    // sitt eget tillstånd och inget behöver trädas igenom Layout.
+    function onOppna() {
+      setOpen(true)
+      setQuery('')
+      setSelected(0)
+      setFel(null)
+    }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('hubben:palett', onOppna)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('hubben:palett', onOppna)
+    }
   }, [])
 
   useEffect(() => {
@@ -185,7 +198,9 @@ export default function CommandPalette() {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh]" onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}>
+    // Högre upp och lägre lista på telefon: tangentbordet tar halva skärmen,
+    // och med 15vh toppmarginal hamnade förslagen under det.
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-3 pt-[6vh] sm:px-0 sm:pt-[15vh]" onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <input
@@ -200,7 +215,7 @@ export default function CommandPalette() {
           placeholder="Skriv vad som helst — eller ett kommando…"
           className="w-full border-b border-border bg-transparent px-4 py-3.5 text-sm text-ink placeholder:text-muted/60 outline-none"
         />
-        <ul className="max-h-80 overflow-y-auto p-2">
+        <ul className="max-h-[42vh] overflow-y-auto p-2 sm:max-h-80">
           {poster.length === 0 && <li className="px-3 py-6 text-center text-sm text-muted">Inga träffar</li>}
           {poster.map((p, i) => (
             <li key={p.nyckel}>
