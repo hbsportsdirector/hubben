@@ -897,9 +897,13 @@ create policy owner_all on hub_workouts for all to authenticated
 --
 --   Funktionerna som rör vault kontrollerar själva att auth.uid() äger
 --   raden innan de gör något (hub_set_mail_secret, hub_clear_mail_secret).
---   hub_get_mail_secret gör INTE den kontrollen — den förlitar sig helt på
---   att bara service_role har EXECUTE. Ge aldrig authenticated rättigheter
---   på den funktionen.
+--   hub_get_mail_secret och hub_hamta_oauth saknade den kontrollen helt fram
+--   till 2026-08-16. De har nu en andra försvarslinje som slår till när
+--   auth.uid() inte är null, alltså när en riktig användare frågar. Under
+--   service_role är den overksam med flit — en kontroll som kan sänka
+--   mejlsynken vore ett sämre byte än risken den skyddar mot.
+--   EXECUTE-listan är fortfarande den PRIMÄRA spärren: ge aldrig
+--   authenticated rättigheter på någon av dem.
 --
 --   OBS: hub_agare() och hub_min_hub() är identiska (båda `select auth.uid()`
 --   som STABLE SECURITY DEFINER). RLS-policyerna använder hub_agare(),
@@ -1173,8 +1177,11 @@ end $function$;
 
 -- ── hub_get_mail_secret(p_account_id uuid) ─────────────── SECURITY DEFINER
 -- EXECUTE: postgres, service_role   ← MÅSTE förbli så.
--- VARNING: funktionen gör ingen ägarkontroll. Den lämnar ut IMAP-lösenordet
--- i klartext för vilket konto-id som helst. Enda spärren är EXECUTE-listan.
+-- Lämnar ut IMAP-lösenordet i klartext. Sedan 2026-08-16 finns en andra
+-- försvarslinje: en INLOGGAD användare får bara sitt eget konto. Under
+-- service_role är auth.uid() null, så vakten rör inte edge-funktionerna —
+-- med flit, en kontroll som kan sänka mejlsynken vore ett sämre byte.
+-- EXECUTE-listan är fortfarande den primära spärren.
 CREATE OR REPLACE FUNCTION public.hub_get_mail_secret(p_account_id uuid)
  RETURNS text
  LANGUAGE plpgsql
@@ -1185,6 +1192,15 @@ declare
   v_secret uuid;
   v_varde text;
 begin
+  if auth.uid() is not null then
+    if not exists (
+      select 1 from public.hub_mail_accounts
+      where id = p_account_id and user_id = auth.uid()
+    ) then
+      raise exception 'Åtkomst nekad';
+    end if;
+  end if;
+
   select secret_id into v_secret from public.hub_mail_accounts where id = p_account_id;
   if v_secret is null then return null; end if;
   select decrypted_secret into v_varde from vault.decrypted_secrets where id = v_secret;
@@ -1194,8 +1210,10 @@ end $function$;
 
 -- ── hub_hamta_oauth(p_user uuid, p_provider text) ──────── SECURITY DEFINER
 -- EXECUTE: postgres, service_role   ← MÅSTE förbli så.
--- VARNING: ingen ägarkontroll, tar user_id som parameter. Returnerar
--- klienthemlighet och refresh-token i klartext.
+-- Returnerar klienthemlighet och refresh-token i klartext. Tar user_id som
+-- parameter, så sedan 2026-08-16 kontrolleras att en INLOGGAD användare bara
+-- frågar om sig själv. Under service_role är auth.uid() null och vakten är
+-- overksam — EXECUTE-listan är fortfarande den primära spärren.
 CREATE OR REPLACE FUNCTION public.hub_hamta_oauth(p_user uuid, p_provider text)
  RETURNS TABLE(client_id text, hemlighet text, refresh_token text)
  LANGUAGE plpgsql
@@ -1204,6 +1222,10 @@ CREATE OR REPLACE FUNCTION public.hub_hamta_oauth(p_user uuid, p_provider text)
 AS $function$
 declare v_rad public.hub_oauth_klienter;
 begin
+  if auth.uid() is not null and p_user is distinct from auth.uid() then
+    raise exception 'Åtkomst nekad';
+  end if;
+
   select * into v_rad from public.hub_oauth_klienter
   where user_id = p_user and provider = p_provider;
   if not found then return; end if;
