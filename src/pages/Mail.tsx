@@ -310,6 +310,11 @@ export default function Mail() {
   const [bulkSok, setBulkSok] = useState('')
   const [visaNytt, setVisaNytt] = useState(false)
   const [misslyckades, setMisslyckades] = useState<string | null>(null)
+  // Ångra skicka. Gmails modell: inte återkallning — mejlet har helt enkelt
+  // inte gått iväg än. Rutan står kvar under nedräkningen, så ingenting kan
+  // gå förlorat om man ångrar sig; det är därför den inte stängs direkt.
+  const [angraKvar, setAngraKvar] = useState<number | null>(null)
+  const angraRef = useRef<(() => void) | null>(null)
   const [enkelFlytt, setEnkelFlytt] = useState<Mejl | null>(null)
   const [synkar, setSynkar] = useState(false)
   const [senastSynk, setSenastSynk] = useState<string | null>(null)
@@ -317,6 +322,38 @@ export default function Mail() {
   const listRef = useRef<HTMLDivElement>(null)
   // Bara en avbetning i taget — annars slåss två omgångar om samma köposter
   const koarbetar = useRef(false)
+
+  const ANGRA_SEKUNDER = 8
+
+  /** Lägger sändningen i en lokal utkorg några sekunder. Ångrar man inte
+   *  skickas mejlet som vanligt; ångrar man får anroparen tillbaka ett
+   *  besked i stället, och rutan står kvar med allt kvar i den. */
+  function medAngra(gor: () => Promise<{ fel?: string } | undefined>): Promise<{ fel?: string }> {
+    return new Promise((klar) => {
+      let kvar = ANGRA_SEKUNDER
+      setAngraKvar(kvar)
+      const rakna = setInterval(() => {
+        kvar -= 1
+        setAngraKvar(kvar > 0 ? kvar : null)
+      }, 1000)
+      const timer = setTimeout(async () => {
+        clearInterval(rakna)
+        setAngraKvar(null)
+        angraRef.current = null
+        klar((await gor()) ?? {})
+      }, ANGRA_SEKUNDER * 1000)
+      angraRef.current = () => {
+        clearTimeout(timer)
+        clearInterval(rakna)
+        setAngraKvar(null)
+        angraRef.current = null
+        klar({ fel: 'Sändningen avbröts — mejlet ligger kvar här.' })
+      }
+    })
+  }
+
+  // Timers får inte leva vidare om vyn lämnas mitt i en nedräkning
+  useEffect(() => () => { angraRef.current?.() }, [])
 
   async function anropaFunktion(namn: string, kropp: Record<string, unknown>) {
     const { data: { session } } = await supabase.auth.getSession()
@@ -1215,7 +1252,7 @@ export default function Mail() {
               flyttar={flyttar}
               onFlytta={(mappId) => { setVisaFlytt(false); flytta([vald.id], mappId) }}
               onRadera={() => flytta([vald.id], undefined, 'trash')}
-              onSkicka={async (kropp) => {
+              onSkicka={(kropp) => medAngra(async () => {
                 // inReplyToId sätter In-Reply-To och References. Det hör hemma
                 // i ett svar, inte i en vidarebefordran.
                 const { vidarebefordran, ...rest } = kropp as Record<string, unknown>
@@ -1224,8 +1261,8 @@ export default function Mail() {
                 if (svar?.fel) return { fel: svar.fel as string }
                 uppdatera(vald.id, { reply_later: false } as Partial<Mejl>)
                 setTimeout(() => laddaMeta(), 8000) // kopian till Skickat gors i bakgrunden
-                return { ok: true }
-              }}
+                return {}
+              })}
               onSvaraSenare={() => svaraSenare(vald)}
               onStjarna={() => uppdatera(vald.id, { flagged: !vald.flagged })}
             />
@@ -1273,17 +1310,33 @@ export default function Mail() {
         </div>
       )}
 
+      {/* Ovanför bottennavet på telefon, där tummen redan är. z över allt
+          annat — ångrar man sig är det bråttom. */}
+      {angraKvar !== null && (
+        <div className="fixed inset-x-0 bottom-[calc(4.9rem+env(safe-area-inset-bottom))] z-[70] flex justify-center px-4 md:bottom-6">
+          <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-2xl">
+            <span className="text-sm text-ink">Skickar om {angraKvar} s</span>
+            <button
+              onClick={() => angraRef.current?.()}
+              className="rounded-xl bg-accent px-3 py-1.5 text-sm font-medium text-white"
+            >
+              Ångra
+            </button>
+          </div>
+        </div>
+      )}
+
       <NyttMejl
         open={visaNytt}
         onClose={() => setVisaNytt(false)}
         konton={konton}
         forvaltKonto={kontoFilter !== 'alla' ? kontoFilter : konton[0]?.id}
-        onSkicka={async (kropp) => {
+        onSkicka={(kropp) => medAngra(async () => {
           const svar = await anropaFunktion('mail-send', kropp)
           // Kopian till Skickat görs efter svaret — kolla utfallet strax efteråt
           if (!svar?.fel) setTimeout(() => laddaMeta(), 8000)
           return svar
-        }}
+        })}
       />
 
       {/* Kopian till Skickat gjordes i bakgrunden och gick fel. Ingen väntade
