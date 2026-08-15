@@ -236,7 +236,22 @@ Deno.serve(async (req: Request) => {
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lyckades = async (o: any, patch: Record<string, unknown>) => {
-    await admin.from("hub_messages").update({ ...patch, pending_folder_id: null }).eq("id", o.msg_id);
+    const { error } = await admin.from("hub_messages")
+      .update({ ...patch, pending_folder_id: null }).eq("id", o.msg_id);
+    if (error) {
+      // 23505 = krock mot unika (folder_id, uid). Synken hann hamta hem mejlet
+      // i malmappen som en EGEN rad innan vi skrev om var. Den raden ar da den
+      // riktiga - var ar en dubblett som annars blir kvar for alltid, markt
+      // flyttad, och visas dubbelt i malmappen.
+      if (error.code === "23505") {
+        await admin.from("hub_messages").delete().eq("id", o.msg_id);
+      } else {
+        // Allt annat: behall koposten. Forr raderades den harnast oavsett,
+        // sa ett misslyckat skrivfel gjorde en flytt tyst fel for alltid.
+        await misslyckades(o, "Kunde inte skriva om raden: " + error.message);
+        return;
+      }
+    }
     await admin.from("hub_pending_ops").delete().eq("id", o.id);
     utforda++;
   };
