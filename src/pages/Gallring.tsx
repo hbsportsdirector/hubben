@@ -116,14 +116,14 @@ export default function Gallring() {
         p_msg_ids: ids,
         p_mal_mapp: konto.gallring_mapp_id,
         p_mal_roll: null,
-      })
+      }).throwOnError()
     }
   }
 
   async function valjMapp(kontoId: string, mappId: string) {
     setKonton((prev) => prev.map((k) => (k.id === kontoId ? { ...k, gallring_mapp_id: mappId || null } : k)))
     await supabase.from('hub_mail_accounts')
-      .update({ gallring_mapp_id: mappId || null }).eq('id', kontoId)
+      .update({ gallring_mapp_id: mappId || null }).eq('id', kontoId).throwOnError()
   }
 
   if (laddar) return <Spinner />

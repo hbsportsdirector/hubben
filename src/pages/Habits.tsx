@@ -55,11 +55,11 @@ export default function Habits() {
     }
     if ((existing.status ?? 'klar') === 'klar') {
       setLogs(logs.map((l) => (l.id === existing.id ? { ...l, status: 'overhoppad' } : l)))
-      await supabase.from('hub_habit_logs').update({ status: 'overhoppad' }).eq('id', existing.id)
+      await supabase.from('hub_habit_logs').update({ status: 'overhoppad' }).eq('id', existing.id).throwOnError()
       return
     }
     setLogs(logs.filter((l) => l.id !== existing.id))
-    await supabase.from('hub_habit_logs').delete().eq('id', existing.id)
+    await supabase.from('hub_habit_logs').delete().eq('id', existing.id).throwOnError()
   }
 
   const arKlar = (habitId: string, dag: Date) =>
@@ -74,7 +74,7 @@ export default function Habits() {
   }
 
   async function remove(habit: HubHabit) {
-    await supabase.from('hub_habits').delete().eq('id', habit.id)
+    await supabase.from('hub_habits').delete().eq('id', habit.id).throwOnError()
     load()
   }
 
@@ -324,10 +324,10 @@ function HabitModal({ open, onClose, habit, onSaved }: { open: boolean; onClose:
       paused_from: pausadTill ? (habit?.paused_from ?? format(new Date(), 'yyyy-MM-dd')) : null,
     }
     if (habit) {
-      await supabase.from('hub_habits').update(payload).eq('id', habit.id)
+      await supabase.from('hub_habits').update(payload).eq('id', habit.id).throwOnError()
     } else {
       const userId = await getUserId()
-      await supabase.from('hub_habits').insert({ ...payload, user_id: userId })
+      await supabase.from('hub_habits').insert({ ...payload, user_id: userId }).throwOnError()
     }
     onClose()
     onSaved()

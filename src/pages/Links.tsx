@@ -21,7 +21,7 @@ export default function Links() {
   useNewParam(() => { setEditLink(null); setModal(true) })
 
   async function remove(id: string) {
-    await supabase.from('hub_links').delete().eq('id', id)
+    await supabase.from('hub_links').delete().eq('id', id).throwOnError()
     load()
   }
 
@@ -102,10 +102,10 @@ function LinkModal({ open, onClose, link, categories, onSaved }: {
     if (!/^https?:\/\//.test(fullUrl)) fullUrl = `https://${fullUrl}`
     const payload = { title: title.trim(), url: fullUrl, category: category.trim() || 'Övrigt' }
     if (link) {
-      await supabase.from('hub_links').update(payload).eq('id', link.id)
+      await supabase.from('hub_links').update(payload).eq('id', link.id).throwOnError()
     } else {
       const userId = await getUserId()
-      await supabase.from('hub_links').insert({ ...payload, user_id: userId })
+      await supabase.from('hub_links').insert({ ...payload, user_id: userId }).throwOnError()
     }
     onClose()
     onSaved()

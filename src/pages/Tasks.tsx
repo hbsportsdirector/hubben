@@ -41,23 +41,23 @@ export default function Tasks() {
     await supabase.from('hub_tasks').update({
       done: !task.done,
       completed_at: task.done ? null : new Date().toISOString(),
-    }).eq('id', task.id)
+    }).eq('id', task.id).throwOnError()
     load()
   }
 
   async function removeTask(id: string) {
-    await supabase.from('hub_tasks').delete().eq('id', id)
+    await supabase.from('hub_tasks').delete().eq('id', id).throwOnError()
     load()
   }
 
   async function removeGoal(id: string) {
-    await supabase.from('hub_goals').delete().eq('id', id)
+    await supabase.from('hub_goals').delete().eq('id', id).throwOnError()
     load()
   }
 
   async function setProgress(goal: HubGoal, progress: number) {
     setGoals(goals.map((g) => (g.id === goal.id ? { ...g, progress } : g)))
-    await supabase.from('hub_goals').update({ progress }).eq('id', goal.id)
+    await supabase.from('hub_goals').update({ progress }).eq('id', goal.id).throwOnError()
   }
 
   if (loading) return <Spinner />
@@ -231,7 +231,7 @@ function ProjectsCard({ projects, onChange }: { projects: HubProject[]; onChange
   }
 
   async function remove(id: string) {
-    await supabase.from('hub_projects').delete().eq('id', id)
+    await supabase.from('hub_projects').delete().eq('id', id).throwOnError()
     onChange()
   }
 

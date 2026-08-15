@@ -56,8 +56,8 @@ export function GoogleKalender() {
     setKalendrar((prev) => prev.map((x) => (x.id === k.id ? { ...x, aktiv: nyttVarde } : x)))
     await supabase.from('hub_calendars')
       .update(nyttVarde ? { aktiv: true } : { aktiv: false, delta_link: null, senast_synkad: null })
-      .eq('id', k.id)
-    if (!nyttVarde) await supabase.from('hub_events').delete().eq('calendar_id', k.id)
+      .eq('id', k.id).throwOnError()
+    if (!nyttVarde) await supabase.from('hub_events').delete().eq('calendar_id', k.id).throwOnError()
     await ladda()
   }
 
@@ -128,7 +128,7 @@ export function GoogleKalender() {
   }
 
   async function kopplaBort() {
-    await supabase.rpc('hub_koppla_bort_oauth', { p_provider: 'google' })
+    await supabase.rpc('hub_koppla_bort_oauth', { p_provider: 'google' }).throwOnError()
     await ladda()
   }
 

@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import { getUserId } from '../lib/data'
 import { useNewParam } from '../lib/useNewParam'
 import type { HubWorkout } from '../lib/types'
-import { Card, SectionTitle, Button, Input, Select, Label, Modal, EmptyState, Spinner, StatTile, Textarea } from '../components/ui'
+import { Card, SectionTitle, Button, Input, Label, Modal, EmptyState, Spinner, StatTile, Textarea } from '../components/ui'
 import Heatmap from '../components/Heatmap'
 
 const KINDS = ['Handboll', 'Gym', 'Löpning', 'Padel', 'Promenad', 'Annat']
@@ -34,7 +34,7 @@ export default function Training() {
   useNewParam(() => { setEditWorkout(null); setModal(true) })
 
   async function remove(id: string) {
-    await supabase.from('hub_workouts').delete().eq('id', id)
+    await supabase.from('hub_workouts').delete().eq('id', id).throwOnError()
     load()
   }
 
@@ -157,10 +157,10 @@ function WorkoutModal({ open, onClose, workout, onSaved }: {
     if (!min || min <= 0 || !date) return
     const payload = { kind, workout_date: date, duration_min: min, intensity, notes: notes.trim() || null }
     if (workout) {
-      await supabase.from('hub_workouts').update(payload).eq('id', workout.id)
+      await supabase.from('hub_workouts').update(payload).eq('id', workout.id).throwOnError()
     } else {
       const userId = await getUserId()
-      await supabase.from('hub_workouts').insert({ ...payload, user_id: userId })
+      await supabase.from('hub_workouts').insert({ ...payload, user_id: userId }).throwOnError()
     }
     onClose()
     onSaved()

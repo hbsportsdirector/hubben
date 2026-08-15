@@ -47,7 +47,7 @@ export default function Economy() {
   useNewParam(() => setTxModal(true))
 
   async function removeTx(id: string) {
-    await supabase.from('hub_transactions').delete().eq('id', id)
+    await supabase.from('hub_transactions').delete().eq('id', id).throwOnError()
     load()
   }
 
@@ -237,13 +237,13 @@ function BudgetSection({ budgets, spentByCategory, onChange }: {
     await supabase.from('hub_budgets').upsert(
       { user_id: userId, category, monthly_limit: amount },
       { onConflict: 'user_id,category' }
-    )
+    ).throwOnError()
     setLimit('')
     onChange()
   }
 
   async function remove(id: string) {
-    await supabase.from('hub_budgets').delete().eq('id', id)
+    await supabase.from('hub_budgets').delete().eq('id', id).throwOnError()
     onChange()
   }
 
@@ -296,13 +296,13 @@ function SavingsRow({ goal, onChange }: { goal: HubSavingsGoal; onChange: () => 
   async function addAmount() {
     const delta = Number(amount)
     if (!delta) return
-    await supabase.from('hub_savings_goals').update({ current_amount: Number(goal.current_amount) + delta }).eq('id', goal.id)
+    await supabase.from('hub_savings_goals').update({ current_amount: Number(goal.current_amount) + delta }).eq('id', goal.id).throwOnError()
     setAmount('')
     onChange()
   }
 
   async function remove() {
-    await supabase.from('hub_savings_goals').delete().eq('id', goal.id)
+    await supabase.from('hub_savings_goals').delete().eq('id', goal.id).throwOnError()
     onChange()
   }
 
@@ -354,7 +354,7 @@ function TxModal({ open, onClose, onSaved }: { open: boolean; onClose: () => voi
       category,
       description: description.trim() || null,
       tx_date: date,
-    })
+    }).throwOnError()
     onClose()
     onSaved()
   }
@@ -424,7 +424,7 @@ function SavingsModal({ open, onClose, onSaved }: { open: boolean; onClose: () =
       target_amount: t,
       current_amount: Number(current) || 0,
       deadline: deadline || null,
-    })
+    }).throwOnError()
     onClose()
     onSaved()
   }

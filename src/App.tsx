@@ -17,6 +17,7 @@ import WeeklyReview from './pages/WeeklyReview'
 import Settings from './pages/Settings'
 import Mail from './pages/Mail'
 import Gallring from './pages/Gallring'
+import Felvakt from './components/Felvakt'
 import { Spinner } from './components/ui'
 
 export default function App() {
@@ -38,6 +39,8 @@ export default function App() {
 
   return (
     <Layout userEmail={session.user.email ?? ''}>
+      {/* Utanför Routes: ett fel ska synas oavsett vilken sida man står på */}
+      <Felvakt />
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/uppgifter" element={<Tasks />} />

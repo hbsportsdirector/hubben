@@ -307,7 +307,6 @@ export default function Mail() {
   const [valda, setValda] = useState<Set<string>>(new Set())
   const [sistKlickad, setSistKlickad] = useState<number | null>(null)
   const [visaBulkFlytt, setVisaBulkFlytt] = useState(false)
-  const [bulkSok, setBulkSok] = useState('')
   const [visaNytt, setVisaNytt] = useState(false)
   const [misslyckades, setMisslyckades] = useState<string | null>(null)
   // Ångra skicka. Gmails modell: inte återkallning — mejlet har helt enkelt
@@ -447,8 +446,6 @@ export default function Mail() {
    *  snedstreck — så båda räknas. INBOX-prefixet är ingen egen nivå, det är
    *  bara var mapparna råkar bo, så det plockas bort först. Annars hamnar
    *  hela Täby-trädet ett steg in i onödan. */
-  const mappdjup = (path: string) =>
-    (path.replace(/^INBOX[./]/, '').replace(/^\[Gmail\][./]/, '').match(/[./]/g) ?? []).length
 
   /** Sökvägen till mappen ovanför, eller null om det inte finns någon. */
   const foraldern = (path: string): string | null => {
@@ -464,7 +461,7 @@ export default function Mail() {
   /** Döljer eller tar tillbaka en mapp. Bara i Hubben — mappen och dess mejl
    *  ligger orörda kvar på mejlservern. */
   async function vaxlaDold(m: Mapp) {
-    await supabase.from('hub_folders').update({ hidden: !m.hidden }).eq('id', m.id)
+    await supabase.from('hub_folders').update({ hidden: !m.hidden }).eq('id', m.id).throwOnError()
     if (mappFilter === m.id) setMappFilter(null)
     await laddaMeta()
   }
@@ -683,7 +680,7 @@ export default function Mail() {
 
   async function uppdatera(id: string, patch: Partial<Mejl>) {
     setMejl((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
-    await supabase.from('hub_messages').update(patch).eq('id', id)
+    await supabase.from('hub_messages').update(patch).eq('id', id).throwOnError()
     laddaAntal()
   }
 
@@ -745,11 +742,16 @@ export default function Mail() {
    *  ingen sparad lista att lägga tillbaka och ingen väntan på IMAP. */
   async function flytta(ids: string[], mappId?: string, roll?: string) {
     if (!ids.length) return
+    // Läsrutan visar "Flyttar…" på knappen medan det pågår. Flaggan fanns
+    // redan och skickades vidare, men sattes aldrig — så texten kunde aldrig
+    // dyka upp.
+    setFlyttar(true)
     const { data, error } = await supabase.rpc('hub_flytta', {
       p_msg_ids: ids,
       p_mal_mapp: mappId ?? null,
       p_mal_roll: roll ?? null,
     })
+    setFlyttar(false)
     if (error) {
       setMisslyckades(error.message)
       setTimeout(() => setMisslyckades(null), 8000)
@@ -795,7 +797,7 @@ export default function Mail() {
   async function bulkUppdatera(patch: Partial<Mejl>) {
     const ids = [...valda]
     setMejl((prev) => prev.map((m) => (valda.has(m.id) ? { ...m, ...patch } : m)))
-    await supabase.from('hub_messages').update(patch).in('id', ids)
+    await supabase.from('hub_messages').update(patch).in('id', ids).throwOnError()
     setValda(new Set())
     laddaMejl(); laddaAntal()
   }
@@ -1120,7 +1122,7 @@ export default function Mail() {
             <div className="relative flex flex-wrap items-center gap-1 border-b border-border bg-accent/10 px-2 py-2">
               <span className="px-1 text-xs font-semibold text-accent-soft">{valda.size} markerade</span>
               <button
-                onClick={() => { setVisaBulkFlytt(!visaBulkFlytt); setBulkSok('') }}
+                onClick={() => setVisaBulkFlytt(!visaBulkFlytt)}
                 className="rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-ink"
               >
                 📁 Flytta
@@ -1352,7 +1354,7 @@ export default function Mail() {
           </p>
           <button
             onClick={async () => {
-              await supabase.from('hub_mail_accounts').update({ sent_kopia_fel: null }).eq('id', k.id)
+              await supabase.from('hub_mail_accounts').update({ sent_kopia_fel: null }).eq('id', k.id).throwOnError()
               laddaMeta()
             }}
             className="mt-2 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"

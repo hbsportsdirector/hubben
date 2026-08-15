@@ -64,7 +64,7 @@ export default function MarketWidgets() {
         symbol: sym,
         label: label ?? null,
         sort_order: stocks.length,
-      })
+      }).throwOnError()
       setSymbolInput('')
       const list = await loadStocks()
       fetchQuotes(list)
@@ -74,7 +74,7 @@ export default function MarketWidgets() {
   }
 
   async function remove(id: string) {
-    await supabase.from('hub_stocks').delete().eq('id', id)
+    await supabase.from('hub_stocks').delete().eq('id', id).throwOnError()
     const list = await loadStocks()
     fetchQuotes(list)
   }

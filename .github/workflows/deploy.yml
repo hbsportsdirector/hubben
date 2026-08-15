@@ -27,6 +27,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Lintningen körs FÖRE bygget och fäller det. Regeln som fångar
+      # okontrollerade databasskrivningar är bara värd något om den stoppar
+      # en deploy — annars blir den en varning man vänjer sig vid.
+      - run: npm run lint
       - run: npm run build
       - name: SPA-fallback för client-side routing
         run: cp dist/index.html dist/404.html

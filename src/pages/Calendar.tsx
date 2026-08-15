@@ -165,7 +165,7 @@ export default function Calendar() {
 
   async function vaxlaSynlig(k: Kalender) {
     setKalendrar((prev) => prev.map((x) => (x.id === k.id ? { ...x, synlig: !x.synlig } : x)))
-    await supabase.from('hub_calendars').update({ synlig: !k.synlig }).eq('id', k.id)
+    await supabase.from('hub_calendars').update({ synlig: !k.synlig }).eq('id', k.id).throwOnError()
   }
 
   const load = useCallback(async () => {
@@ -256,7 +256,7 @@ export default function Calendar() {
         // Hor handelsen till en Google-kalender ska andringen dit ocksa
         ...(ev.raw.calendar_id ? { pending_op: 'andra', pending_nasta: new Date().toISOString(), pending_forsok: 0 } : {}),
       })
-      .eq('id', ev.id)
+      .eq('id', ev.id).throwOnError()
     if (ev.raw.calendar_id) betaAvKon(); else load()
   }
 
@@ -268,13 +268,13 @@ export default function Calendar() {
       // att kunna beratta vilken handelse det galler. Den goms ur vyn sa lange.
       await supabase.from('hub_events')
         .update({ pending_op: 'radera', pending_scope: rad.series_master_id ? omfattning : null, pending_nasta: new Date().toISOString(), pending_forsok: 0 })
-        .eq('id', id)
+        .eq('id', id).throwOnError()
       // Samma sak här: raden göms av vyns filter så fort vi läst om, och
       // behöver inte vänta på att Google hunnit släppa den.
       load()
       await betaAvKon()
     } else {
-      await supabase.from('hub_events').delete().eq('id', id)
+      await supabase.from('hub_events').delete().eq('id', id).throwOnError()
       load()
     }
   }
@@ -335,7 +335,7 @@ export default function Calendar() {
               onClick={async () => {
                 setKalendrar((prev) => prev.map((x) => ({ ...x, synlig: true })))
                 setVisaEgna(true)
-                await supabase.from('hub_calendars').update({ synlig: true }).eq('synlig', false)
+                await supabase.from('hub_calendars').update({ synlig: true }).eq('synlig', false).throwOnError()
               }}
               className="rounded-xl px-2 py-1 text-xs text-accent-soft hover:underline"
             >
@@ -650,7 +650,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
         ...(iGoogle
           ? { pending_till_kalender: flyttar ? kalenderId : null }
           : { calendar_id: kalenderId }),
-      }).eq('id', event.id)
+      }).eq('id', event.id).throwOnError()
     } else {
       const userId = await getUserId()
       const slut: Slut = slutTyp === 'antal'
@@ -659,7 +659,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       const rrule = byggRrule(upprepning, veckodagar, slut, allDay)
       await supabase.from('hub_events').insert({
         ...payload, ...ko, rrule, calendar_id: kalenderId, user_id: userId,
-      })
+      }).throwOnError()
     }
     onClose()
     onSaved(!!kalenderId)

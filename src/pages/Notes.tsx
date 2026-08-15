@@ -24,12 +24,12 @@ export default function Notes() {
   useNewParam(() => { setEditNote(null); setModal(true) })
 
   async function togglePin(note: HubNote) {
-    await supabase.from('hub_notes').update({ pinned: !note.pinned }).eq('id', note.id)
+    await supabase.from('hub_notes').update({ pinned: !note.pinned }).eq('id', note.id).throwOnError()
     load()
   }
 
   async function remove(id: string) {
-    await supabase.from('hub_notes').delete().eq('id', id)
+    await supabase.from('hub_notes').delete().eq('id', id).throwOnError()
     load()
   }
 
@@ -101,10 +101,10 @@ function NoteModal({ open, onClose, note, onSaved }: { open: boolean; onClose: (
     const tagList = tags.split(',').map((t) => t.trim().replace(/^#/, '')).filter(Boolean)
     const payload = { title: title.trim(), content, tags: tagList, updated_at: new Date().toISOString() }
     if (note) {
-      await supabase.from('hub_notes').update(payload).eq('id', note.id)
+      await supabase.from('hub_notes').update(payload).eq('id', note.id).throwOnError()
     } else {
       const userId = await getUserId()
-      await supabase.from('hub_notes').insert({ ...payload, user_id: userId })
+      await supabase.from('hub_notes').insert({ ...payload, user_id: userId }).throwOnError()
     }
     onClose()
     onSaved()

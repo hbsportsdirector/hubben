@@ -66,23 +66,23 @@ export default function Dashboard() {
   async function quickAdd() {
     if (!quickTitle.trim()) return
     const userId = await getUserId()
-    await supabase.from('hub_tasks').insert({ user_id: userId, title: quickTitle.trim(), due_date: todayStr })
+    await supabase.from('hub_tasks').insert({ user_id: userId, title: quickTitle.trim(), due_date: todayStr }).throwOnError()
     setQuickTitle('')
     load()
   }
 
   async function toggleTask(task: HubTask) {
-    await supabase.from('hub_tasks').update({ done: true, completed_at: new Date().toISOString() }).eq('id', task.id)
+    await supabase.from('hub_tasks').update({ done: true, completed_at: new Date().toISOString() }).eq('id', task.id).throwOnError()
     load()
   }
 
   async function toggleHabit(habit: HubHabit) {
     const existing = logs.find((l) => l.habit_id === habit.id)
     if (existing) {
-      await supabase.from('hub_habit_logs').delete().eq('id', existing.id)
+      await supabase.from('hub_habit_logs').delete().eq('id', existing.id).throwOnError()
     } else {
       const userId = await getUserId()
-      await supabase.from('hub_habit_logs').insert({ user_id: userId, habit_id: habit.id, log_date: todayStr })
+      await supabase.from('hub_habit_logs').insert({ user_id: userId, habit_id: habit.id, log_date: todayStr }).throwOnError()
     }
     load()
   }

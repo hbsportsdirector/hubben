@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { format, startOfWeek, endOfWeek, addWeeks, parseISO, isPast, isToday, startOfMonth, endOfMonth } from 'date-fns'
+import { format, startOfWeek, endOfWeek, addWeeks, parseISO, startOfMonth, endOfMonth } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { supabase } from '../lib/supabase'
 import { getUserId, formatSEK } from '../lib/data'
@@ -81,7 +81,7 @@ export default function WeeklyReview() {
         carried_over: carriedOver.trim(),
         completed_at: markDone ? new Date().toISOString() : review?.completed_at ?? null,
       }
-      await supabase.from('hub_weekly_reviews').upsert(payload, { onConflict: 'user_id,week_start' })
+      await supabase.from('hub_weekly_reviews').upsert(payload, { onConflict: 'user_id,week_start' }).throwOnError()
       load()
     } finally {
       setSaving(false)

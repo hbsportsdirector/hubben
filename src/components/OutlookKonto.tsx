@@ -81,7 +81,7 @@ export function OutlookKonto() {
   }
 
   async function kopplaBort() {
-    await supabase.rpc('hub_koppla_bort_oauth', { p_provider: 'microsoft' })
+    await supabase.rpc('hub_koppla_bort_oauth', { p_provider: 'microsoft' }).throwOnError()
     await ladda()
   }
 

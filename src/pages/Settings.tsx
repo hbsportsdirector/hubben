@@ -380,7 +380,7 @@ function AccountCard({ account, status, onSaved }: { account: HubMailAccount; st
             className="!px-3 !py-1.5 text-xs"
             disabled={signSparad}
             onClick={async () => {
-              await supabase.from('hub_mail_accounts').update({ signature: signatur }).eq('id', account.id)
+              await supabase.from('hub_mail_accounts').update({ signature: signatur }).eq('id', account.id).throwOnError()
               setSignSparad(true)
               onSaved()
             }}
