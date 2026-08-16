@@ -3,6 +3,7 @@ import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { sv } from 'date-fns/locale'
 import { Link } from 'react-router-dom'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
+import { getUserId } from '../lib/data'
 import { Spinner, EmptyState } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
 import { MejlTillHubben, DagensSchema } from '../components/MejlTillHubben'
@@ -315,6 +316,11 @@ export default function Mail() {
   // Ångra skicka. Gmails modell: inte återkallning — mejlet har helt enkelt
   // inte gått iväg än. Rutan står kvar under nedräkningen, så ingenting kan
   // gå förlorat om man ångrar sig; det är därför den inte stängs direkt.
+  const [regelKvitto, setRegelKvitto] = useState<string | null>(null)
+  // Hur många mejl reglerna tagit senaste dygnet. En regel som börjat svälja
+  // fel post ska gå att upptäcka utan att man letar efter den.
+  const [sorterade, setSorterade] = useState(0)
+  const [visaSorterade, setVisaSorterade] = useState(false)
   const [angraKvar, setAngraKvar] = useState<number | null>(null)
   const angraRef = useRef<(() => void) | null>(null)
   const [enkelFlytt, setEnkelFlytt] = useState<Mejl | null>(null)
@@ -550,7 +556,11 @@ export default function Mail() {
 
     const fraga = sok.trim()
     const rollLada = LADOR.find((l) => l.id === lada)?.roll
-    if (fraga) {
+    if (visaSorterade) {
+      // Vad reglerna tog senaste dygnet, oavsett vilken mapp de hamnade i
+      q = q.not('sorterad_at', 'is', null)
+        .gte('sorterad_at', new Date(Date.now() - 864e5).toISOString())
+    } else if (fraga) {
       // En sökning ska hitta mejlet, inte lådan man råkar stå i. Kontofiltret
       // får däremot vara kvar — det är ett medvetet val man gjort.
     } else if (mappFilter) {
@@ -595,7 +605,19 @@ export default function Mail() {
     // Listan byts ut på plats — ingen spinner, inget hopp
     setMejl((data ?? []) as Mejl[])
     setLaddar(false)
-  }, [lada, kontoFilter, mappFilter, sok, dataVersion])
+  }, [lada, kontoFilter, mappFilter, sok, dataVersion, visaSorterade])
+
+  /** Räknar vad reglerna tagit senaste dygnet. Frågan går mot hub_messages i
+   *  stället för vyn — det är bara en siffra, och vyn har inget att tillföra. */
+  const laddaSorterade = useCallback(async () => {
+    const { count } = await supabase.from('hub_messages')
+      .select('*', { count: 'exact', head: true })
+      .not('sorterad_at', 'is', null)
+      .gte('sorterad_at', new Date(Date.now() - 864e5).toISOString())
+    setSorterade(count ?? 0)
+  }, [])
+
+  useEffect(() => { laddaSorterade() }, [laddaSorterade, dataVersion])
 
   /** Varför kom det här mejlet med? Svensk stemming slår ihop serier/serien,
    *  så en träff kan sitta i finstilt text långt ner i ett reklammejl. Utan
@@ -702,6 +724,34 @@ export default function Mail() {
     setMejl((prev) => prev.map((m) => (set.has(m.id) ? { ...m, seen: true } : m)))
     await supabase.from('hub_messages').update({ seen: true }).in('id', ids).throwOnError()
     laddaAntal()
+  }
+
+  /** "Flytta alltid från den här avsändaren hit."
+   *
+   *  Regeln skapas ur ett riktigt mejl, i flödet, i stället för på en tom
+   *  regelsida där man ska föreställa sig avsändare man inte har framför sig.
+   *  Den körs direkt på det som redan ligger i inkorgen, så man ser effekten
+   *  på en gång i stället för att undra om den tog.
+   *
+   *  Bakgrunden sorterar sedan var tionde minut. Flytten går genom samma kö
+   *  som allt annat, så mejlen flyttas på riktigt hos mejlservern. */
+  async function skapaRegel(m: Mejl, mappId: string) {
+    if (!m.from_email) return
+    try {
+      const userId = await getUserId()
+      const { data, error } = await supabase.from('hub_regler')
+        .insert({ user_id: userId, epost: m.from_email, mapp_id: mappId })
+        .select('id').single()
+      if (error) throw new Error(error.message)
+      const { data: antal } = await supabase.rpc('hub_kor_regler', { p_user: userId, p_regel: data.id })
+      setRegelKvitto(`Regel skapad för ${m.from_email}${antal ? ` — ${antal} mejl flyttade` : ''}`)
+      setTimeout(() => setRegelKvitto(null), 6000)
+      await laddaMejl(); await laddaAntal(); await laddaSorterade()
+      betaAvKon()
+    } catch (e) {
+      setMisslyckades(e instanceof Error ? e.message : String(e))
+      setTimeout(() => setMisslyckades(null), 8000)
+    }
   }
 
   async function svaraSenare(m: Mejl) {
@@ -991,6 +1041,29 @@ export default function Mail() {
           ))}
         </div>
       </div>
+
+      {/* Regler får inte sortera i tysthet. En som börjat svälja fel post ska
+          synas här, inte upptäckas om tre veckor när något saknas. */}
+      {(sorterade > 0 || visaSorterade) && (
+        <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-[13px]">
+          <span aria-hidden>🗂️</span>
+          <span className="min-w-0 flex-1 truncate text-muted">
+            {visaSorterade
+              ? `Visar ${sorterade} mejl som reglerna sorterade senaste dygnet`
+              : `${sorterade} mejl sorterade av regler senaste dygnet`}
+          </span>
+          <button
+            onClick={() => { setVisaSorterade((v) => !v); setValdId(null) }}
+            className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-accent-soft hover:bg-card-hover"
+          >
+            {visaSorterade ? 'Tillbaka' : 'Visa'}
+          </button>
+        </div>
+      )}
+
+      {regelKvitto && (
+        <p className="rounded-xl border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">✓ {regelKvitto}</p>
+      )}
 
       <div
         ref={panelRef}
@@ -1367,6 +1440,7 @@ export default function Mail() {
               setVisaFlytt={(v) => { setVisaFlytt(false); if (v) setEnkelFlytt(vald) }}
               flyttar={flyttar}
               onFlytta={(mappId) => { setVisaFlytt(false); flytta([vald.id], mappId) }}
+              onAlltid={(mappId) => { setVisaFlytt(false); skapaRegel(vald, mappId) }}
               onRadera={() => flytta([vald.id], undefined, 'trash')}
               onSkicka={(kropp) => medAngra(async () => {
                 // inReplyToId sätter In-Reply-To och References. Det hör hemma
@@ -1724,7 +1798,7 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
   )
 }
 
-function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onRadera, onSkicka, onSvaraSenare, onStjarna, onTillbaka }: {
+function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onAlltid, onRadera, onSkicka, onSvaraSenare, onStjarna, onTillbaka }: {
   onTillbaka?: () => void
   mejl: Mejl
   /** Hela konversationen, äldst först. Tom när mejlet står för sig självt. */
@@ -1738,6 +1812,8 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
   setVisaFlytt: (v: boolean) => void
   flyttar: boolean
   onFlytta: (mappId: string) => void
+  /** Skapa en regel: flytta alltid fran den har avsandaren till mappen */
+  onAlltid: (mappId: string) => void
   onRadera: () => void
   onSkicka: (kropp: Record<string, unknown>) => Promise<{ ok?: boolean; fel?: string }>
   onSvaraSenare: () => void
@@ -1883,10 +1959,13 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
                   const mk = konton.find((k) => k.id === m.account_id)
                   const annatKonto = m.account_id !== mejl.account_id
                   return (
-                    <li key={m.id}>
+                    <li key={m.id} className="group/mal flex items-center gap-1">
+                      {/* "Alltid" sitter där man ändå står och väljer mapp.
+                          En regel byggs alltså ur ett mejl man har framför sig,
+                          inte ur minnet på en tom regelsida. */}
                       <button
                         onClick={() => onFlytta(m.id)}
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-accent/15 hover:text-ink"
+                        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-accent/15 hover:text-ink"
                       >
                         <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: mk?.color ?? '#8b95ad' }} title={mk?.label} />
                         <span className="truncate">{m.path.replace(/^INBOX[./]/, '').replace(/^\[Gmail\]\//, '')}</span>
@@ -1897,6 +1976,15 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
                         )}
                         {(m.total_count ?? 0) > 0 && <span className="ml-auto text-[10px] text-muted/60">{m.total_count}</span>}
                       </button>
+                      {!annatKonto && mejl.from_email && (
+                        <button
+                          onClick={() => onAlltid(m.id)}
+                          title={`Flytta alltid mejl från ${mejl.from_email} hit`}
+                          className="shrink-0 rounded-lg px-2 py-2 text-[11px] font-medium text-muted opacity-0 transition-opacity hover:bg-accent/20 hover:text-accent-soft group-hover/mal:opacity-100"
+                        >
+                          Alltid
+                        </button>
+                      )}
                     </li>
                   )
                 })}
