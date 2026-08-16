@@ -24,31 +24,37 @@ interface Lank {
   framforhallning_dagar: number
   varsel_timmar: number
   aktiv: boolean
+  konto_id: string | null
+  skicka_bekraftelse: boolean
 }
 interface Oppettid { id: string; lank_id: string; veckodag: number; fran_tid: string; till_tid: string }
 interface Bokning { id: string; lank_id: string; namn: string; epost: string; meddelande: string | null; starts_at: string }
 interface Kalender { id: string; namn: string }
+interface Konto { id: string; label: string; email: string }
 
 export default function Bokningar() {
   const [lankar, setLankar] = useState<Lank[]>([])
   const [tider, setTider] = useState<Oppettid[]>([])
   const [bokningar, setBokningar] = useState<Bokning[]>([])
   const [kalendrar, setKalendrar] = useState<Kalender[]>([])
+  const [konton, setKonton] = useState<Konto[]>([])
   const [laddar, setLaddar] = useState(true)
   const [nyttNamn, setNyttNamn] = useState('')
   const [kopierad, setKopierad] = useState<string | null>(null)
 
   const ladda = useCallback(async () => {
-    const [l, t, b, k] = await Promise.all([
+    const [l, t, b, k, m] = await Promise.all([
       supabase.from('hub_bokningslankar').select('*').order('skapad'),
       supabase.from('hub_oppettider').select('*').order('veckodag').order('fran_tid'),
       supabase.from('hub_bokningar').select('*').is('avbokad_at', null).order('starts_at'),
       supabase.from('hub_calendars').select('id, namn').eq('aktiv', true).order('namn'),
+      supabase.from('hub_mail_accounts').select('id, label, email').eq('active', true).order('sort_order'),
     ])
     setLankar((l.data as Lank[]) ?? [])
     setTider((t.data as Oppettid[]) ?? [])
     setBokningar((b.data as Bokning[]) ?? [])
     setKalendrar((k.data as Kalender[]) ?? [])
+    setKonton((m.data as Konto[]) ?? [])
     setLaddar(false)
   }, [])
 
@@ -110,6 +116,7 @@ export default function Bokningar() {
             tider={tider.filter((t) => t.lank_id === l.id)}
             bokningar={bokningar.filter((b) => b.lank_id === l.id)}
             kalendrar={kalendrar}
+            konton={konton}
             adress={adress(l.token)}
             kopierad={kopierad === l.token}
             onKopiera={() => kopiera(l.token)}
@@ -121,8 +128,8 @@ export default function Bokningar() {
   )
 }
 
-function LankKort({ lank, tider, bokningar, kalendrar, adress, kopierad, onKopiera, onAndrat }: {
-  lank: Lank; tider: Oppettid[]; bokningar: Bokning[]; kalendrar: Kalender[]
+function LankKort({ lank, tider, bokningar, kalendrar, konton, adress, kopierad, onKopiera, onAndrat }: {
+  lank: Lank; tider: Oppettid[]; bokningar: Bokning[]; kalendrar: Kalender[]; konton: Konto[]
   adress: string; kopierad: boolean; onKopiera: () => void; onAndrat: () => void
 }) {
   const [dag, setDag] = useState(1)
@@ -204,6 +211,23 @@ function LankKort({ lank, tider, bokningar, kalendrar, adress, kopierad, onKopie
             onBlur={(e) => e.target.value !== (lank.plats ?? '') && spara({ plats: e.target.value || null })}
             placeholder="Teams, kontoret, telefon…"
           />
+        </div>
+        <div>
+          <Label>Bekräftelse till den som bokar</Label>
+          <Select
+            value={lank.skicka_bekraftelse && lank.konto_id ? lank.konto_id : ''}
+            onChange={(e) => spara({
+              konto_id: e.target.value || null,
+              skicka_bekraftelse: !!e.target.value,
+            })}
+          >
+            <option value="">Skicka ingen bekräftelse</option>
+            {konton.map((m) => <option key={m.id} value={m.id}>Från {m.email}</option>)}
+          </Select>
+          <p className="mt-1 text-xs text-muted">
+            Går ut direkt när någon bokat, med tid, plats och en uppmaning att svara på mejlet
+            om något ändras.
+          </p>
         </div>
         <div>
           <Label>Visa tider {lank.framforhallning_dagar} dagar fram</Label>

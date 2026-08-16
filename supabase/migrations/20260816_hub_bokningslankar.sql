@@ -196,3 +196,24 @@ end $function$;
 -- Anon får köra exakt de här två och ingenting annat.
 grant execute on function public.hub_bokningssida(text) to anon, authenticated;
 grant execute on function public.hub_boka(text, timestamptz, text, text, text) to anon, authenticated;
+
+-- ── Bekräftelse till den som bokat (tillägg) ───────────────────────────────
+--
+-- Skickas av edge-funktionen boka-bekraftelse, INTE av mail-send. Skälet är
+-- avgränsning: mail-send tar godtycklig mottagare och godtycklig text, så att
+-- öppna den för cron-nyckeln hade betytt att nyckeln kan skicka vad som helst
+-- i Pers namn. boka-bekraftelse kan bara skicka EN sorts mejl, till adressen i
+-- en bokning som redan finns, med text den bygger själv.
+alter table public.hub_bokningslankar
+  add column if not exists konto_id uuid references public.hub_mail_accounts(id) on delete set null,
+  add column if not exists skicka_bekraftelse boolean not null default true;
+
+alter table public.hub_bokningar
+  add column if not exists bekraftelse_at timestamptz,
+  add column if not exists bekraftelse_fel text;
+
+-- hub_boka avslutas med ett net.http_post till boka-bekraftelse när länken har
+-- ett avsändarkonto. Anropet KÖAS, så den som bokar får sitt svar direkt
+-- oavsett hur långsam mejlservern är — och en trasig SMTP får aldrig fälla
+-- själva bokningen. Se den fullständiga definitionen i migrationen
+-- 20260816_hub_boka_bekraftelse (applicerad via MCP).
