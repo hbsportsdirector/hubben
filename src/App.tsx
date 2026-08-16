@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import Layout from './components/Layout'
@@ -17,12 +17,14 @@ import WeeklyReview from './pages/WeeklyReview'
 import Settings from './pages/Settings'
 import Mail from './pages/Mail'
 import Gallring from './pages/Gallring'
+import Boka from './pages/Boka'
 import Felvakt from './components/Felvakt'
 import { Spinner } from './components/ui'
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const plats = useLocation()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -32,6 +34,18 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s))
     return () => sub.subscription.unsubscribe()
   }, [])
+
+  // Bokningssidan ligger FÖRE inloggningsspärren — den är till för andra
+  // människor, som varken har eller ska ha ett konto här. Den läser ingenting
+  // direkt ur databasen; allt går via två funktioner som bara lämnar ut
+  // mötets namn och de lediga tiderna. Se Boka.tsx.
+  if (plats.pathname.startsWith('/boka/')) {
+    return (
+      <Routes>
+        <Route path="/boka/:token" element={<Boka />} />
+      </Routes>
+    )
+  }
 
   if (loading) return <div className="flex min-h-screen items-center justify-center"><Spinner /></div>
   if (!session) return <Login />
