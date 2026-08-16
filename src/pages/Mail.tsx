@@ -690,6 +690,20 @@ export default function Mail() {
     laddaAntal()
   }
 
+  /** Öppnar man en konversation är hela den läst.
+   *
+   *  Raden i listan representerar konversationen, och dess olästmarkering
+   *  räknar alla mejl i den. Markerades bara det nyaste blev raden liggande
+   *  fet trots att man öppnat den — vilket är precis vad som hände för
+   *  handbollstrådarna, som är de enda som faktiskt har flera svar. */
+  async function markeraLasta(ids: string[]) {
+    if (!ids.length) return
+    const set = new Set(ids)
+    setMejl((prev) => prev.map((m) => (set.has(m.id) ? { ...m, seen: true } : m)))
+    await supabase.from('hub_messages').update({ seen: true }).in('id', ids).throwOnError()
+    laddaAntal()
+  }
+
   async function svaraSenare(m: Mejl) {
     await uppdatera(m.id, { reply_later: !m.reply_later, reply_later_at: m.reply_later ? null : new Date().toISOString() } as Partial<Mejl>)
     if (lada !== 'reply_later') setMejl((prev) => prev.filter((x) => x.id !== m.id))
@@ -1263,7 +1277,10 @@ export default function Mail() {
                       }`}
                     />
                   <button
-                    onClick={() => { setValdId(m.id); if (!m.seen) uppdatera(m.id, { seen: true }) }}
+                    onClick={() => {
+                      setValdId(m.id)
+                      markeraLasta(trad.mejl.filter((x) => !x.seen).map((x) => x.id))
+                    }}
                     className="flex min-w-0 flex-1 gap-3 text-left"
                   >
                     <span className="relative shrink-0">
