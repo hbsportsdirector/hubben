@@ -138,7 +138,7 @@ export function GoogleKalender() {
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-semibold">📅 Google-kalendern</h2>
+          <h2 className="font-semibold">📅 Google — kalender och Drive</h2>
           <p className="mt-0.5 text-sm text-muted">
             {ansluten
               ? `Ansluten${klient?.konto ? ' — ' + klient.konto : ''}`
@@ -146,13 +146,24 @@ export function GoogleKalender() {
           </p>
         </div>
         {ansluten && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={synka}
               disabled={synkar}
               className="rounded-xl bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
             >
               {synkar ? 'Hämtar…' : '↻ Hämta kalendern'}
+            </button>
+            {/* Måste finnas även när allt ser anslutet ut. Godkännandet gäller
+                bestämda behörigheter, och tillkommer det en — som Drive — går
+                det inte att laga genom att koppla bort och börja om: då är
+                klienthemligheten borta också. */}
+            <button
+              onClick={anslut}
+              disabled={ansluter}
+              className="rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-ink disabled:opacity-50"
+            >
+              {ansluter ? 'Öppnar Google…' : 'Anslut om'}
             </button>
             <button
               onClick={kopplaBort}
@@ -245,7 +256,7 @@ export function GoogleKalender() {
             disabled={ansluter || !klient?.har_hemlighet}
             className="w-full rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
           >
-            {ansluter ? 'Öppnar Google…' : 'Anslut Google-kalendern'}
+            {ansluter ? 'Öppnar Google…' : 'Anslut Google'}
           </button>
           {!klient?.har_hemlighet && (
             <p className="text-xs text-muted">Spara hemligheten först, sedan tänds knappen.</p>
@@ -255,6 +266,14 @@ export function GoogleKalender() {
             är till för dig. Välj <em>Avancerat</em> och fortsätt.
           </p>
         </div>
+      )}
+
+      {ansluten && (
+        <p className="mt-3 text-xs text-muted">
+          Godkännandet omfattar kalendern och Drive. Har du nyss slagit på något nytt —
+          eller slutar hämtningen fungera — tryck <em>Anslut om</em>. Google visar en
+          varning om att appen inte är granskad; välj <em>Avancerat</em> och fortsätt.
+        </p>
       )}
 
       {utfall && (
