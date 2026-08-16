@@ -345,7 +345,17 @@ Deno.serve(async (req: Request) => {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(String(j.error?.message ?? r.status).slice(0, 200));
-      await klar(e, { etag: j.etag ?? null });
+
+      // Hela serien andrades hos Google, men bara raden Per rorde finns
+      // uppdaterad har. Utan det har stod de ovriga tillfallena kvar med gammal
+      // titel och farg tills synken hunnit ifatt - upp till tio minuter dar det
+      // ser ut som att bara ETT tillfalle andrades trots att man valde serien.
+      const seriefarg = (() => { const s = fargId(e.color); return (s && GOOGLE_FARGER[s]) || e.color; })();
+      await admin.from("hub_events").update({
+        title: e.title, description: e.description, location: e.location, color: seriefarg,
+      }).eq("calendar_id", e.calendar_id).eq("series_master_id", e.series_master_id);
+
+      await klar(e, { etag: j.etag ?? null, color: seriefarg });
     } catch (fel) {
       const text = fel instanceof Error ? fel.message : String(fel);
       if (fel instanceof Omojligt) await gerUpp(e, text);
