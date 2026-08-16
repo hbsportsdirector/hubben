@@ -19,6 +19,7 @@ import Mail from './pages/Mail'
 import Gallring from './pages/Gallring'
 import Boka from './pages/Boka'
 import Bokningar from './pages/Bokningar'
+import Drive from './pages/Drive'
 import Felvakt from './components/Felvakt'
 import { Spinner } from './components/ui'
 
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="/mejl" element={<Mail />} />
         <Route path="/gallring" element={<Gallring />} />
         <Route path="/bokningar" element={<Bokningar />} />
+        <Route path="/drive" element={<Drive />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

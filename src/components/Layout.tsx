@@ -15,6 +15,7 @@ const navItems = [
   { to: '/ekonomi', label: 'Ekonomi', emoji: '💰' },
   { to: '/vecka', label: 'Veckogranskning', emoji: '🧭' },
   { to: '/bokningar', label: 'Bokningslänkar', emoji: '🔖' },
+  { to: '/drive', label: 'Drive', emoji: '☁️' },
 ]
 
 // Tio val fick plats i en sidledsscroll, men det som ligger utanför kanten

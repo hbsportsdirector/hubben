@@ -1,7 +1,7 @@
 # Inställningarna som INTE syns i källkoden.
 #
 # verify_jwt avgör om Supabase kräver en giltig inloggningstoken innan
-# funktionen ens körs. De fem som står på false gör det av var sitt tvingande
+# funktionen ens körs. De sju som står på false gör det av var sitt tvingande
 # skäl — det står i respektive fils inledning. Sätt aldrig någon av dem till
 # true utan att läsa den kommentaren först, och sätt aldrig någon annan
 # funktion till false.
@@ -62,6 +62,20 @@ verify_jwt = true
 
 # Samma skäl som google-oauth-callback
 [functions.ms-oauth-callback]
+verify_jwt = false
+
+# --- Drive ---
+# Släpper in schemaläggaren via cron-nyckeln
+[functions.drive-sync]
+verify_jwt = false
+
+[functions.drive-fil]
+verify_jwt = true
+
+# --- Bokningar ---
+# Anropas av databasen via net.http_post, som inte har någon session att låna
+# en token av. Kontrollen är cron-nyckeln.
+[functions.boka-bekraftelse]
 verify_jwt = false
 
 # --- Övrigt ---

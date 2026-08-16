@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
+import { DriveSok, type DriveFil } from './Drive'
 
 export interface Bilaga {
   id: string
@@ -233,13 +234,55 @@ function tillBas64(buf: ArrayBuffer) {
   return btoa(bin)
 }
 
+/** Hämtar en Drive-fil som bilaga. Googles egna dokumentformat har inget
+ *  innehåll att ladda ner, så servern exporterar dem — därför kan namnet som
+ *  kommer tillbaka skilja sig från det i Drive. */
+async function hamtaFranDrive(fileId: string): Promise<UtgaendeBilaga> {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Inte inloggad')
+  const res = await fetch(`${supabaseUrl}/functions/v1/drive-fil`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: supabaseKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fileId }),
+  })
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(j.fel ?? `Servern svarade ${res.status}`)
+  return {
+    filename: j.filename,
+    contentType: j.mimeType,
+    dataBase64: j.dataBase64,
+    storlek: j.bytes,
+  }
+}
+
 export function Bifoga({ bilagor, setBilagor }: {
   bilagor: UtgaendeBilaga[]
   setBilagor: (b: UtgaendeBilaga[]) => void
 }) {
   const input = useRef<HTMLInputElement>(null)
   const [laser, setLaser] = useState(false)
+  const [driveOppen, setDriveOppen] = useState(false)
+  const [driveFel, setDriveFel] = useState<string | null>(null)
+  const [hamtarDrive, setHamtarDrive] = useState<string | null>(null)
   const summa = bilagor.reduce((s, b) => s + b.storlek, 0)
+
+  async function franDrive(f: DriveFil) {
+    setHamtarDrive(f.file_id)
+    setDriveFel(null)
+    try {
+      const b = await hamtaFranDrive(f.file_id)
+      setBilagor([...bilagor, b])
+      setDriveOppen(false)
+    } catch (e) {
+      setDriveFel(e instanceof Error ? e.message : String(e))
+    } finally {
+      setHamtarDrive(null)
+    }
+  }
 
   return (
     <div>
@@ -275,6 +318,13 @@ export function Bifoga({ bilagor, setBilagor }: {
         >
           {laser ? 'Läser…' : '📎 Bifoga fil'}
         </button>
+        <button
+          type="button"
+          onClick={() => { setDriveOppen(true); setDriveFel(null) }}
+          className="rounded-lg border border-border px-2 py-1 text-[11px] text-muted transition-colors hover:text-ink"
+        >
+          ☁ Från Drive
+        </button>
         {bilagor.map((b, i) => (
           <span key={i} className="flex items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-[11px] text-muted">
             <span className="max-w-40 truncate text-ink">{b.filename}</span>
@@ -292,6 +342,42 @@ export function Bifoga({ bilagor, setBilagor }: {
         <p className="mt-1 text-[11px] text-bad">
           {storlek(summa)} totalt — servern tar emot högst 15 MB. Ta bort något.
         </p>
+      )}
+
+      {driveOppen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-8"
+          onClick={() => setDriveOppen(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-border bg-card p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center gap-2">
+              <h2 className="text-sm font-semibold">Bifoga från Drive</h2>
+              <button
+                type="button"
+                onClick={() => setDriveOppen(false)}
+                className="ml-auto rounded-lg px-2 py-1 text-lg leading-none text-muted hover:text-ink"
+                aria-label="Stäng"
+              >✕</button>
+            </div>
+            {driveFel && (
+              <p className="mb-2 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">{driveFel}</p>
+            )}
+            {hamtarDrive && (
+              <p className="mb-2 rounded-xl border border-border bg-surface px-3 py-2 text-xs text-muted">
+                Hämtar filen från Google…
+              </p>
+            )}
+            <DriveSok onValj={franDrive} valjEtikett="Bifoga" hojd="max-h-[22rem]" />
+            <p className="mt-2 text-[11px] text-muted">
+              Google-dokument och presentationer bifogas som PDF, kalkylark som xlsx —
+              de har inget eget filformat att skicka. Över 10 MB får du skicka en länk
+              i stället.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -15,7 +15,19 @@ const A = Deno.env.get("SUPABASE_ANON_KEY")!;
 const enc = new TextEncoder();
 
 const AUKTORITET = "https://accounts.google.com/o/oauth2/v2/auth";
-const SCOPE = "https://www.googleapis.com/auth/calendar";
+// drive.readonly ar ett "restricted" scope. Google kraver en betald
+// tredjepartsgranskning (CASA) for att slappa det i en verifierad app, men
+// inte for en app som star kvar i Testing med Per som enda testanvandare.
+// Priset for det ar att refresh-tokenet dor efter sju dagar och maste fornyas
+// harifran - kalendern hanger pa samma godkannande.
+//
+// Alternativet, drive.file, slipper allt det men later Hubben se bara filer
+// Per plockat fram i Googles egen valjare. Da vore den egna sokningen
+// meningslos, och den var hela poangen.
+const SCOPE = [
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/drive.readonly",
+].join(" ");
 
 function bas64url(b: Uint8Array) {
   let bin = "";
