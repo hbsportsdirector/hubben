@@ -187,6 +187,14 @@ async function synkaAnvandare(userId: string) {
           }
           const rad = tillRad(userId, kal.id, e, kal.color);
           if (!rad.starts_at) continue;
+          // Fonstret galler bara vid en FULL hamtning. Den inkrementella synken
+          // far tillbaka allt som andrats, och andrar man moderhandelsen i en
+          // serie skickar Google hela expansionen - fjorton ar fram for en
+          // traning utan slutdatum. Sa 92 % av tabellen blev tillfallen ingen
+          // nagonsin tittar pa. Vi sparar bara det som ligger i fonstret; resten
+          // kommer in av sig sjalvt nar fonstret rullar framat.
+          const nar = Date.parse(rad.starts_at);
+          if (nar > nu + FRAMAT_DAGAR * 864e5 || nar < nu - BAKAT_DAGAR * 864e5) continue;
           attSpara.push(rad);
         }
         if (attSpara.length) {
