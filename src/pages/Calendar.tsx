@@ -13,7 +13,29 @@ import { localizer, messages, formats } from '../lib/calendarLocale'
 import type { HubEvent } from '../lib/types'
 import { Card, Button, Input, Label, Modal, Spinner, Textarea } from '../components/ui'
 
-const EVENT_COLORS = ['#38bdf8', '#6366f1', '#34d399', '#fbbf24', '#f87171', '#e879f9']
+/** Googles elva händelsefärger, med deras id.
+ *
+ *  Väljaren visade förr sex egenpåhittade färger. De nådde aldrig fram: Google
+ *  känner bara sin egen palett, och kalendersynken skrev tillbaka kalenderns
+ *  färg vid varje varv. Resultatet var 5914 händelser med exakt kalenderfärg
+ *  och en färgväljare som inte gjorde någonting.
+ *
+ *  Med Googles egna färger blir det man väljer det som faktiskt visas — både
+ *  här och i telefonens kalender. */
+const GOOGLE_FARGER: { id: string; hex: string; namn: string }[] = [
+  { id: '1', hex: '#7986cb', namn: 'Lavendel' },
+  { id: '2', hex: '#33b679', namn: 'Salvia' },
+  { id: '3', hex: '#8e24aa', namn: 'Vindruva' },
+  { id: '4', hex: '#e67c73', namn: 'Flamingo' },
+  { id: '5', hex: '#f6bf26', namn: 'Banan' },
+  { id: '6', hex: '#f4511e', namn: 'Mandarin' },
+  { id: '7', hex: '#039be5', namn: 'Påfågel' },
+  { id: '8', hex: '#616161', namn: 'Grafit' },
+  { id: '9', hex: '#3f51b5', namn: 'Blåbär' },
+  { id: '10', hex: '#0b8043', namn: 'Basilika' },
+  { id: '11', hex: '#d50000', namn: 'Tomat' },
+]
+const EVENT_COLORS = GOOGLE_FARGER.map((f) => f.hex)
 
 const VECKODAGAR = [
   { kod: 'MO', namn: 'må' }, { kod: 'TU', namn: 'ti' }, { kod: 'WE', namn: 'on' },
@@ -389,7 +411,7 @@ export default function Calendar() {
                 persistTimes(event, start as Date, end as Date, event.allDay)
               }
               resizable
-              components={{ toolbar: SwedishToolbar }}
+              components={{ toolbar: SwedishToolbar, month: { event: ManadsHandelse } }}
               eventPropGetter={(ev) => ({ style: { backgroundColor: ev.color, color: lasbarText(ev.color) } })}
               dayLayoutAlgorithm="no-overlap"
               style={{ height: '100%' }}
@@ -419,6 +441,29 @@ export default function Calendar() {
         onDelete={remove}
       />
     </div>
+  )
+}
+
+/** Månadsvyns händelse: klockslag först, sedan titeln.
+ *
+ *  react-big-calendar visar bara titeln i månadsvyn, så "Träning" och
+ *  "Träning" på samma dag var omöjliga att skilja åt utan att klicka. Tiden
+ *  först gör dessutom att dagens rader går att läsa som en kolumn.
+ *
+ *  Heldagar får ingen tid — där vore "00:00" bara brus. Hela titeln plus
+ *  spannet ligger i title-attributet, så det som klipps av syns vid hovring. */
+function ManadsHandelse({ event }: { event: CalEvent }) {
+  const tid = format(event.start, 'HH:mm')
+  const spann = event.allDay
+    ? 'Heldag'
+    : `${tid}–${format(event.end, 'HH:mm')}`
+  return (
+    <span className="flex items-baseline gap-1" title={`${spann} · ${event.title}`}>
+      {!event.allDay && (
+        <span className="shrink-0 tabular-nums opacity-80">{tid}</span>
+      )}
+      <span className="min-w-0 flex-1 truncate">{event.title}</span>
+    </span>
   )
 }
 
@@ -857,17 +902,21 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
         </div>
         <div>
           <Label>Färg</Label>
-          <div className="flex gap-2">
-            {EVENT_COLORS.map((c) => (
+          <div className="flex flex-wrap gap-2">
+            {GOOGLE_FARGER.map((f) => (
               <button
-                key={c}
-                onClick={() => setColor(c)}
-                className={`h-8 w-8 rounded-full transition-transform ${color === c ? 'scale-110 ring-2 ring-ink ring-offset-2 ring-offset-card' : ''}`}
-                style={{ background: c }}
-                aria-label={`Färg ${c}`}
+                key={f.id}
+                onClick={() => setColor(f.hex)}
+                className={`h-8 w-8 rounded-full transition-transform ${color === f.hex ? 'scale-110 ring-2 ring-ink ring-offset-2 ring-offset-card' : ''}`}
+                style={{ background: f.hex }}
+                title={f.namn}
+                aria-label={`Färg ${f.namn}`}
               />
             ))}
           </div>
+          <p className="mt-1 text-xs text-muted">
+            Googles egna färger — det du väljer syns även i telefonens kalender.
+          </p>
         </div>
         <div className="flex justify-between gap-2 pt-2">
           {event ? (

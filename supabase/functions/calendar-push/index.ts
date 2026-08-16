@@ -40,6 +40,39 @@ async function nyttAccessToken(clientId: string, hemlighet: string, refresh: str
 
 const datumdel = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
+/** Googles elva handelsefarger. Utan colorId visar Google kalenderns farg, och
+ *  synken skriver da tillbaka den - vilket ar precis varfor fargvaljaren aldrig
+ *  gjorde nagot: 5914 rader hade exakt kalenderfarg. */
+const GOOGLE_FARGER: Record<string, string> = {
+  "1": "#7986cb", "2": "#33b679", "3": "#8e24aa", "4": "#e67c73",
+  "5": "#f6bf26", "6": "#f4511e", "7": "#039be5", "8": "#616161",
+  "9": "#3f51b5", "10": "#0b8043", "11": "#d50000",
+};
+
+/** Narmaste Google-farg, matt som avstand i RGB.
+ *
+ *  Valjaren erbjuder numera Googles egna farger, sa det blir nastan alltid en
+ *  exakt traff. Narmaste-matchningen finns for de gamla handelserna som lagts
+ *  in med Hubbens forra palett - de ska ocksa kunna fa en farg som overlever. */
+function fargId(hex: string | null | undefined): string | null {
+  if (!hex) return null;
+  const rgb = (h: string) => {
+    const v = h.replace("#", "");
+    if (!/^[0-9a-fA-F]{6}$/.test(v)) return null;
+    return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)];
+  };
+  const mal = rgb(hex);
+  if (!mal) return null;
+  let bast: string | null = null;
+  let minsta = Infinity;
+  for (const [id, kandidat] of Object.entries(GOOGLE_FARGER)) {
+    const c = rgb(kandidat)!;
+    const d = (c[0] - mal[0]) ** 2 + (c[1] - mal[1]) ** 2 + (c[2] - mal[2]) ** 2;
+    if (d < minsta) { minsta = d; bast = id; }
+  }
+  return bast;
+}
+
 /** Klockslag och datum sett i en viss tidszon.
  *
  *  Behovs for att andra tiden pa en HEL serie. Rakna i UTC gar bra tills
@@ -71,6 +104,8 @@ function tillGoogle(e: any, tz: string) {
     summary: e.title ?? "",
     description: e.description ?? undefined,
     location: e.location ?? undefined,
+    // Utan colorId visar Google kalenderns farg och synken skriver tillbaka den
+    colorId: fargId(e.color) ?? undefined,
   };
   if (e.all_day) {
     const slutRaa = e.ends_at ? Date.parse(e.ends_at) : start;
@@ -97,7 +132,7 @@ Deno.serve(async (req: Request) => {
   const admin = createClient(U, S);
 
   const { data: koade } = await admin.from("hub_events")
-    .select("id, calendar_id, pending_till_kalender, external_id, series_master_id, rrule, title, description, location, starts_at, ends_at, all_day, pending_op, pending_scope, pending_forsok")
+    .select("id, calendar_id, pending_till_kalender, external_id, series_master_id, rrule, title, description, location, starts_at, ends_at, all_day, color, pending_op, pending_scope, pending_forsok")
     .eq("user_id", user.id)
     .not("pending_op", "is", null)
     .lte("pending_nasta", new Date().toISOString())
@@ -211,7 +246,13 @@ Deno.serve(async (req: Request) => {
           nyaSerier++;
           utforda++;
         } else {
-          await klar(e, { external_id: j.id, etag: j.etag ?? null, color: nuvarande.color });
+          // Fargen Google faktiskt kommer visa - inte kalenderns, som forr skrevs
+          // hit och gjorde valet meningslost.
+          const satt = fargId(e.color);
+          await klar(e, {
+            external_id: j.id, etag: j.etag ?? null,
+            color: (satt && GOOGLE_FARGER[satt]) || nuvarande.color,
+          });
         }
         continue;
       }

@@ -56,6 +56,17 @@ async function nyttAccessToken(clientId: string, hemlighet: string, refresh: str
   return j.access_token as string;
 }
 
+/** Googles elva handelsefarger. Satter man colorId pa en handelse visar Google
+ *  den fargen i stallet for kalenderns - och det ar den vi ska spegla.
+ *
+ *  Forut skrev synken tillbaka kalenderfargen pa VARJE handelse vid varje varv,
+ *  sa en egen farg overlevde aldrig. 5914 rader hade exakt kalenderfarg. */
+const GOOGLE_FARGER: Record<string, string> = {
+  "1": "#7986cb", "2": "#33b679", "3": "#8e24aa", "4": "#e67c73",
+  "5": "#f6bf26", "6": "#f4511e", "7": "#039be5", "8": "#616161",
+  "9": "#3f51b5", "10": "#0b8043", "11": "#d50000",
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function tillRad(userId: string, kalenderId: string, e: any, farg: string) {
   const heldag = !!e.start?.date;
@@ -72,7 +83,8 @@ function tillRad(userId: string, kalenderId: string, e: any, farg: string) {
     starts_at: start,
     ends_at: slut,
     all_day: heldag,
-    color: farg,
+    // Handelsens egen farg om den har en, annars kalenderns
+    color: (e.colorId && GOOGLE_FARGER[String(e.colorId)]) || farg,
     series_master_id: e.recurringEventId ?? null,
     organizer: e.organizer?.email ?? null,
     installd: e.status === "cancelled",
