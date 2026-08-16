@@ -41,10 +41,15 @@ export default function App() {
   // människor, som varken har eller ska ha ett konto här. Den läser ingenting
   // direkt ur databasen; allt går via två funktioner som bara lämnar ut
   // mötets namn och de lediga tiderna. Se Boka.tsx.
-  if (plats.pathname.startsWith('/boka/')) {
+  //
+  // Två adresser leder hit. /b/ är den korta man kan säga i telefon, /boka/
+  // den ursprungliga med den långa token. Den gamla slutar aldrig gälla bara
+  // för att en kortare tillkommit — någon kan redan ha fått den.
+  if (plats.pathname.startsWith('/boka/') || plats.pathname.startsWith('/b/')) {
     return (
       <Routes>
         <Route path="/boka/:token" element={<Boka />} />
+        <Route path="/b/:token" element={<Boka />} />
       </Routes>
     )
   }

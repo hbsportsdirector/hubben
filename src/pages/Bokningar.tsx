@@ -26,11 +26,13 @@ interface Lank {
   aktiv: boolean
   konto_id: string | null
   skicka_bekraftelse: boolean
+  slug: string | null
 }
 interface Oppettid { id: string; lank_id: string; veckodag: number; fran_tid: string; till_tid: string }
 interface Bokning { id: string; lank_id: string; namn: string; epost: string; meddelande: string | null; starts_at: string }
 interface Kalender { id: string; namn: string }
 interface Konto { id: string; label: string; email: string }
+interface Stopp { id: string; datum: string; anteckning: string | null }
 
 export default function Bokningar() {
   const [lankar, setLankar] = useState<Lank[]>([])
@@ -71,13 +73,16 @@ export default function Bokningar() {
     ladda()
   }
 
-  /** Adressen du delar. BASE_URL är /hubben/ på GitHub Pages. */
-  const adress = (token: string) =>
-    `${window.location.origin}${import.meta.env.BASE_URL}boka/${token}`
+  /** Adressen du delar. BASE_URL är /hubben/ på GitHub Pages.
+   *
+   *  Den korta adressen används när den finns. Den långa token slutar aldrig
+   *  gälla — någon kan redan ha fått den — men den är inget man säger högt. */
+  const adress = (l: Lank) =>
+    `${window.location.origin}${import.meta.env.BASE_URL}${l.slug ? `b/${l.slug}` : `boka/${l.token}`}`
 
-  async function kopiera(token: string) {
-    await navigator.clipboard.writeText(adress(token))
-    setKopierad(token)
+  async function kopiera(l: Lank) {
+    await navigator.clipboard.writeText(adress(l))
+    setKopierad(l.token)
     setTimeout(() => setKopierad(null), 2500)
   }
 
@@ -106,6 +111,8 @@ export default function Bokningar() {
         </div>
       </Card>
 
+      <StoppKort />
+
       {lankar.length === 0 ? (
         <Card><EmptyState emoji="📅" text="Ingen länk än. Skapa en så kan folk boka tid hos dig." /></Card>
       ) : (
@@ -117,9 +124,9 @@ export default function Bokningar() {
             bokningar={bokningar.filter((b) => b.lank_id === l.id)}
             kalendrar={kalendrar}
             konton={konton}
-            adress={adress(l.token)}
+            adress={adress(l)}
             kopierad={kopierad === l.token}
-            onKopiera={() => kopiera(l.token)}
+            onKopiera={() => kopiera(l)}
             onAndrat={ladda}
           />
         ))
@@ -135,9 +142,31 @@ function LankKort({ lank, tider, bokningar, kalendrar, konton, adress, kopierad,
   const [dag, setDag] = useState(1)
   const [fran, setFran] = useState('13:00')
   const [till, setTill] = useState('15:00')
+  const [slugFel, setSlugFel] = useState<string | null>(null)
 
   async function spara(patch: Partial<Lank>) {
     await supabase.from('hub_bokningslankar').update(patch).eq('id', lank.id).throwOnError()
+    onAndrat()
+  }
+
+  /** Databasen har både en formkontroll och ett unikt index på slug, så det
+   *  här är bara för att felet ska bli läsbart i stället för en Postgres-rad. */
+  async function sparaSlug(ratt: string) {
+    const v = ratt.trim().toLowerCase()
+    if (v === (lank.slug ?? '')) return
+    if (v && !/^[a-z0-9][a-z0-9-]{1,39}$/.test(v)) {
+      setSlugFel('Bara små bokstäver, siffror och bindestreck — minst två tecken, och inte bindestreck först.')
+      return
+    }
+    const { error } = await supabase.from('hub_bokningslankar')
+      .update({ slug: v || null }).eq('id', lank.id)
+    if (error) {
+      setSlugFel(error.code === '23505'
+        ? 'Den adressen är redan tagen av en annan länk.'
+        : error.message)
+      return
+    }
+    setSlugFel(null)
     onAndrat()
   }
 
@@ -178,13 +207,30 @@ function LankKort({ lank, tider, bokningar, kalendrar, konton, adress, kopierad,
       </div>
 
       {/* Adressen du delar */}
-      <div className="mb-5 flex gap-2">
+      <div className="mb-2 flex gap-2">
         <input
           readOnly value={adress}
           onFocus={(e) => e.currentTarget.select()}
           className="min-w-0 flex-1 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-muted outline-none"
         />
         <Button onClick={onKopiera}>{kopierad ? 'Kopierad ✓' : 'Kopiera'}</Button>
+      </div>
+
+      {/* Slutet på adressen går att döpa om — en adress man ska kunna säga i
+          telefon är något annat än 32 slumpade tecken. */}
+      <div className="mb-5">
+        <label className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
+          <span className="shrink-0">…/b/</span>
+          <input
+            defaultValue={lank.slug ?? ''}
+            onBlur={(e) => sparaSlug(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            placeholder="per"
+            className="w-44 rounded-lg border border-border bg-card px-2 py-1 text-sm text-ink outline-none focus:border-accent"
+          />
+          <span className="shrink-0">små bokstäver, siffror och bindestreck</span>
+        </label>
+        {slugFel && <p className="mt-1 text-xs text-bad">{slugFel}</p>}
       </div>
 
       <div className="grid gap-5 md:grid-cols-2">
@@ -318,6 +364,7 @@ function BokadRad({ bokning, harAvsandare, onAvbokad }: {
 }) {
   const [oppen, setOppen] = useState(false)
   const [anledning, setAnledning] = useState('')
+  const [slappTiden, setSlappTiden] = useState(false)
   const [jobbar, setJobbar] = useState(false)
   const [fel, setFel] = useState<string | null>(null)
 
@@ -326,7 +373,7 @@ function BokadRad({ bokning, harAvsandare, onAvbokad }: {
     setFel(null)
     try {
       const { data, error } = await supabase.rpc('hub_avboka', {
-        p_bokning: bokning.id, p_anledning: anledning,
+        p_bokning: bokning.id, p_anledning: anledning, p_slapp_tiden: slappTiden,
       })
       if (error) throw error
       const svar = data as { ok: boolean; fel?: string }
@@ -367,10 +414,24 @@ function BokadRad({ bokning, harAvsandare, onAvbokad }: {
             placeholder="Varför ställs tiden in? Går med i mejlet."
             className="w-full resize-y rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
           />
+          {/* Utgångsläget är att tiden förblir upptagen. Ställer man in för att
+              man inte kan då, kan man inte då åt någon annan heller. */}
+          <label className="flex items-start gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={slappTiden}
+              onChange={(e) => setSlappTiden(e.target.checked)}
+              className="mt-0.5 accent-(--color-accent)"
+            />
+            <span>
+              Släpp tiden så någon annan kan boka den.
+              {!slappTiden && ' Annars förblir den upptagen hos dig.'}
+            </span>
+          </label>
           {!harAvsandare && (
             <p className="text-xs text-warn">
-              Länken har ingen avsändare vald, så {bokning.namn} får inget mejl. Tiden
-              släpps ändå.
+              Länken har ingen avsändare vald, så {bokning.namn} får inget mejl.
+              Avbokningen görs ändå.
             </p>
           )}
           {fel && <p className="text-xs text-bad">{fel}</p>}
@@ -383,5 +444,95 @@ function BokadRad({ bokning, harAvsandare, onAvbokad }: {
         </div>
       )}
     </li>
+  )
+}
+
+/** Dagar du inte kan.
+ *
+ *  Gäller alla länkar, inte en i taget. "Jag kan inte den 24:e" handlar om
+ *  dig, inte om vilken sorts möte någon vill boka — och länken fortsätter
+ *  fungera för alla andra dagar. */
+function StoppKort() {
+  const [stopp, setStopp] = useState<Stopp[]>([])
+  const [datum, setDatum] = useState('')
+  const [anteckning, setAnteckning] = useState('')
+  const [fel, setFel] = useState<string | null>(null)
+
+  const ladda = useCallback(async () => {
+    const { data } = await supabase.from('hub_bokningsstopp')
+      .select('id, datum, anteckning')
+      .gte('datum', format(new Date(), 'yyyy-MM-dd'))
+      .order('datum')
+    setStopp((data as Stopp[]) ?? [])
+  }, [])
+
+  useEffect(() => { ladda() }, [ladda])
+
+  async function laggTill() {
+    if (!datum) return
+    setFel(null)
+    const { error } = await supabase.from('hub_bokningsstopp').insert({
+      user_id: await getUserId(), datum, anteckning: anteckning.trim() || null,
+    })
+    if (error) {
+      setFel(error.code === '23505' ? 'Den dagen är redan stängd.' : error.message)
+      return
+    }
+    setDatum(''); setAnteckning('')
+    ladda()
+  }
+
+  async function taBort(id: string) {
+    await supabase.from('hub_bokningsstopp').delete().eq('id', id).throwOnError()
+    ladda()
+  }
+
+  return (
+    <Card>
+      <SectionTitle>Dagar du inte kan</SectionTitle>
+      <p className="mb-3 text-sm text-muted">
+        Stänger en enskild dag för alla länkar. Öppettiderna står kvar orörda och
+        dagen öppnar av sig själv när du tar bort den härifrån.
+      </p>
+
+      {stopp.length > 0 && (
+        <ul className="mb-3 space-y-1.5">
+          {stopp.map((s) => (
+            <li key={s.id} className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-sm">
+              <span className="font-medium capitalize">
+                {format(parseISO(s.datum), 'EEEE d MMMM', { locale: sv })}
+              </span>
+              {s.anteckning && <span className="min-w-0 truncate text-muted">· {s.anteckning}</span>}
+              <button
+                onClick={() => taBort(s.id)}
+                className="ml-auto shrink-0 rounded-lg px-2 py-1 text-xs text-muted hover:text-bad"
+              >
+                Öppna igen
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {fel && <p className="mb-2 text-xs text-bad">{fel}</p>}
+
+      <div className="flex flex-wrap items-end gap-2">
+        <Input
+          type="date"
+          value={datum}
+          min={format(new Date(), 'yyyy-MM-dd')}
+          onChange={(e) => setDatum(e.target.value)}
+          className="!w-auto"
+        />
+        <Input
+          value={anteckning}
+          onChange={(e) => setAnteckning(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && laggTill()}
+          placeholder="Varför, för din egen skull"
+          className="min-w-40 flex-1"
+        />
+        <Button onClick={laggTill} disabled={!datum}>Stäng dagen</Button>
+      </div>
+    </Card>
   )
 }
