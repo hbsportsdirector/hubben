@@ -78,6 +78,9 @@ interface Mejl {
   reply_later: boolean
   has_attachments: boolean
   rfc_message_id: string | null
+  /** Binder ihop en konversation. Sätts av mail-sync ur References och
+   *  In-Reply-To, med Message-ID som reserv för ett ensamt mejl. */
+  thread_key: string | null
   to_emails: string[] | null
   /** Mappen mejlet visas i — köad flytt medräknad */
   visad_mapp_id: string
@@ -538,7 +541,7 @@ export default function Mail() {
     // hub_mejl vet vilken mapp ett mejl visas i — även när flytten ligger kvar
     // i kön. Klienten sätter inte ihop det filtret själv längre.
     let q = supabase.from('hub_mejl')
-      .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, vantar, to_emails')
+      .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, thread_key, vantar, to_emails')
       .order('sent_at', { ascending: false })
       .limit(200)
 
@@ -623,7 +626,7 @@ export default function Mail() {
     window.history.replaceState({}, '', window.location.pathname)
     ;(async () => {
       const { data } = await supabase.from('hub_mejl')
-        .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, vantar, to_emails')
+        .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, thread_key, vantar, to_emails')
         .eq('id', id).maybeSingle()
       if (!data) return
       setMejl((prev) => (prev.some((m) => m.id === id) ? prev : [data as Mejl, ...prev]))
@@ -700,10 +703,13 @@ export default function Mail() {
         if (siffra.roll) synkaOhamtade(siffra.roll)
         return
       }
-      if (!mejl.length) return
-      const i = mejl.findIndex((m) => m.id === valdId)
-      if (e.key === 'j') { e.preventDefault(); setValdId(mejl[Math.min(i + 1, mejl.length - 1)]?.id ?? mejl[0].id) }
-      if (e.key === 'k') { e.preventDefault(); setValdId(mejl[Math.max(i - 1, 0)]?.id ?? mejl[0].id) }
+      // J/K bläddrar mellan KONVERSATIONER, inte mellan enskilda mejl. Annars
+      // hade man fått trycka sex gånger för att ta sig förbi en tråd, och
+      // listan visar ju bara en rad för den.
+      if (!tradar.length) return
+      const i = tradar.findIndex((t) => valdId !== null && t.ids.includes(valdId))
+      if (e.key === 'j') { e.preventDefault(); setValdId(tradar[Math.min(i + 1, tradar.length - 1)]?.senaste.id ?? tradar[0].senaste.id) }
+      if (e.key === 'k') { e.preventDefault(); setValdId(tradar[Math.max(i - 1, 0)]?.senaste.id ?? tradar[0].senaste.id) }
       if (!vald) return
       if (e.key === 'l') { e.preventDefault(); svaraSenare(vald) }
       if (e.key === '#' || e.key === 'Delete') { e.preventDefault(); flytta([vald.id], undefined, 'trash') }
@@ -717,19 +723,61 @@ export default function Mail() {
   const kontoAv = (id: string) => konton.find((k) => k.id === id)
 
   /** Klick på kryssrutan. Shift markerar hela spannet från förra klicket. */
+  /** Ett svarsutbyte på tolv mejl är en konversation, inte tolv rader.
+   *
+   *  thread_key har fyllts i av synken sedan mejlklienten byggdes men aldrig
+   *  använts här — den nådde inte ens fram, för vyn tog inte med kolumnen.
+   *
+   *  Grupperingen görs på det som FAKTISKT visas: listan är redan filtrerad
+   *  på låda, mapp, konto och sökning, så en tråd här är "de mejl ur den här
+   *  konversationen som hör hemma i den här vyn". Att hämta in resten hade
+   *  fått mejl att dyka upp i papperskorgen bara för att ett syskon ligger
+   *  där. */
+  const tradar = useMemo(() => {
+    const karta = new Map<string, Mejl[]>()
+    for (const m of mejl) {
+      const nyckel = m.thread_key || m.id
+      const lista = karta.get(nyckel)
+      if (lista) lista.push(m)
+      else karta.set(nyckel, [m])
+    }
+    // Map bevarar insättningsordningen, så trådarna kommer i samma ordning
+    // som det nyaste mejlet hade i den redan sorterade listan.
+    return [...karta.values()].map((grupp) => ({
+      nyckel: grupp[0].thread_key || grupp[0].id,
+      // Nyaste först — den representerar tråden i listan
+      mejl: grupp,
+      senaste: grupp[0],
+      antal: grupp.length,
+      olasta: grupp.filter((m) => !m.seen).length,
+      harBilagor: grupp.some((m) => m.has_attachments),
+      flaggad: grupp.some((m) => m.flagged),
+      svaraSenare: grupp.some((m) => m.reply_later),
+      vantar: grupp.some((m) => m.vantar),
+      ids: grupp.map((m) => m.id),
+    }))
+  }, [mejl])
+
+  /** Tråden som det valda mejlet hör till, för läsrutans trådremsa. */
+  const valdTrad = useMemo(
+    () => (valdId ? tradar.find((t) => t.ids.includes(valdId)) ?? null : null),
+    [tradar, valdId],
+  )
+
+  /** Markeringen går på hela tråden. Markerar man en konversation och trycker
+   *  radera menar man konversationen — inte det senaste svaret i den. */
   function vaxlaVald(index: number, shift: boolean) {
     const ny = new Set(valda)
+    const satt = (ids: string[], pa: boolean) => {
+      for (const id of ids) { if (pa) ny.add(id); else ny.delete(id) }
+    }
     if (shift && sistKlickad !== null) {
       const [a, b] = [Math.min(sistKlickad, index), Math.max(sistKlickad, index)]
-      const paSatt = !ny.has(mejl[index].id)
-      for (let i = a; i <= b; i++) {
-        if (paSatt) ny.add(mejl[i].id)
-        else ny.delete(mejl[i].id)
-      }
+      const paSatt = !tradar[index].ids.every((id) => ny.has(id))
+      for (let i = a; i <= b; i++) satt(tradar[i].ids, paSatt)
     } else {
-      const id = mejl[index].id
-      if (ny.has(id)) ny.delete(id)
-      else ny.add(id)
+      const ids = tradar[index].ids
+      satt(ids, !ids.every((id) => ny.has(id)))
     }
     setValda(ny)
     setSistKlickad(index)
@@ -758,9 +806,11 @@ export default function Mail() {
       return
     }
 
+    // Flyttades det man läste: hoppa till nästa konversation som INTE flyttades
     if (valdId && ids.includes(valdId)) {
-      const i = mejl.findIndex((x) => x.id === valdId)
-      setValdId(mejl.slice(i + 1).find((x) => !ids.includes(x.id))?.id ?? null)
+      const i = tradar.findIndex((t) => t.ids.includes(valdId))
+      const nasta = tradar.slice(i + 1).find((t) => !t.ids.some((x) => ids.includes(x)))
+      setValdId(nasta?.senaste.id ?? null)
     }
     setValda(new Set())
     await laddaMejl()
@@ -1151,22 +1201,26 @@ export default function Mail() {
             {laddar ? <Spinner /> : mejl.length === 0 ? (
               <EmptyState emoji="✨" text={sok ? 'Inga träffar.' : 'Tomt här.'} />
             ) : (
-              mejl.map((m, index) => {
+              tradar.map((trad, index) => {
+                // Tråden representeras av sitt nyaste mejl
+                const m = trad.senaste
                 // I Skickat ar det mottagaren som ska sta har, inte jag sjalv
                 const part = motpart(m)
                 const namn = part.namn
                 const konto = kontoAv(m.account_id)
-                const markerad = valda.has(m.id)
+                const markerad = trad.ids.every((id) => valda.has(id))
+                // Öppnad tråd: raden markeras även när man läser ett äldre svar
+                const oppnad = valdId !== null && trad.ids.includes(valdId)
                 return (
                   <SvepRad
-                    key={m.id}
-                    onVanster={() => flytta([m.id], undefined, 'trash')}
+                    key={trad.nyckel}
+                    onVanster={() => flytta(trad.ids, undefined, 'trash')}
                     onHoger={() => uppdatera(m.id, { reply_later: !m.reply_later })}
                   >
                   <div
                     className={`group/rad flex w-full items-start gap-2 border-l-2 border-b border-b-border/50 pl-2 pr-3 py-3 transition-colors ${
                       markerad ? 'border-l-accent bg-accent/15'
-                        : valdId === m.id ? 'border-l-accent bg-accent/10' : 'border-l-transparent hover:bg-card-hover'
+                        : oppnad ? 'border-l-accent bg-accent/10' : 'border-l-transparent hover:bg-card-hover'
                     }`}
                   >
                     <input
@@ -1197,29 +1251,42 @@ export default function Mail() {
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
-                        <span className={`truncate text-[13px] ${!m.seen ? 'font-semibold text-ink' : 'text-muted'}`}>
+                        <span className={`truncate text-[13px] ${trad.olasta > 0 ? 'font-semibold text-ink' : 'text-muted'}`}>
                           {part.prefix && <span className="text-muted/60">{part.prefix}</span>}
                           {namn}
+                          {/* Antalet mejl i konversationen, som i vilken
+                              mognad klient som helst. Visas bara när det
+                              finns något att räkna. */}
+                          {trad.antal > 1 && (
+                            <span className="ml-1.5 rounded-full bg-border px-1.5 text-[10px] font-medium text-muted">
+                              {trad.antal}
+                            </span>
+                          )}
                         </span>
                         <span className="shrink-0 text-[11px] text-muted">{visaTid(m.sent_at)}</span>
                       </span>
-                      <span className={`mt-0.5 flex items-center gap-1.5 truncate text-[13px] ${!m.seen ? 'font-medium text-ink' : 'text-muted'}`}>
-                        {m.flagged && <span className="shrink-0 text-[11px]">⭐</span>}
-                        {m.reply_later && <span className="shrink-0 text-[11px]">↩️</span>}
+                      <span className={`mt-0.5 flex items-center gap-1.5 truncate text-[13px] ${trad.olasta > 0 ? 'font-medium text-ink' : 'text-muted'}`}>
+                        {trad.flaggad && <span className="shrink-0 text-[11px]">⭐</span>}
+                        {trad.svaraSenare && <span className="shrink-0 text-[11px]">↩️</span>}
                         <span className="truncate">{m.subject || '(inget ämne)'}</span>
-                        {m.vantar && (
+                        {trad.vantar && (
                           <span className="ml-auto shrink-0 text-[11px] text-warn" title="Flyttad — väntar på mejlservern">⏱</span>
                         )}
-                        {m.has_attachments && <span className={`shrink-0 text-[11px] text-muted ${m.vantar ? '' : 'ml-auto'}`} title="Har bilagor">📎</span>}
+                        {trad.harBilagor && <span className={`shrink-0 text-[11px] text-muted ${trad.vantar ? '' : 'ml-auto'}`} title="Har bilagor">📎</span>}
                       </span>
                       {/* Vid sökning ersätts adressraden av stället i mejlet
                           som gav träffen. Utan den fick man öppna mejlet och
                           leta för att förstå varför det kom med. */}
-                      {traffar[m.id] ? (
-                        <span className="mt-0.5 block truncate text-[11px] text-muted/70">{markeraTraff(traffar[m.id])}</span>
-                      ) : (
-                        <span className="mt-0.5 block truncate text-[11px] text-muted/70">{part.adress || (part.prefix ? '' : m.from_email)}</span>
-                      )}
+                      {/* Träffen kan sitta i vilket mejl som helst i tråden,
+                          inte nödvändigtvis det nyaste som visas här */}
+                      {(() => {
+                        const traff = trad.ids.map((id) => traffar[id]).find(Boolean)
+                        return traff ? (
+                          <span className="mt-0.5 block truncate text-[11px] text-muted/70">{markeraTraff(traff)}</span>
+                        ) : (
+                          <span className="mt-0.5 block truncate text-[11px] text-muted/70">{part.adress || (part.prefix ? '' : m.from_email)}</span>
+                        )
+                      })()}
                     </span>
                   </button>
                   </div>
@@ -1246,6 +1313,11 @@ export default function Mail() {
             <Lasruta
               onTillbaka={() => setValdId(null)}
               mejl={vald}
+              // De övriga mejlen i konversationen, äldst först. Tom lista för
+              // ett ensamt mejl — då ritas remsan inte alls.
+              trad={valdTrad && valdTrad.antal > 1 ? [...valdTrad.mejl].reverse() : []}
+              valdIdITrad={valdId}
+              onValjITrad={(id) => { setValdId(id); const t = mejl.find((x) => x.id === id); if (t && !t.seen) uppdatera(id, { seen: true }) }}
               konto={kontoAv(vald.account_id)}
               mappar={mappar.filter((m) => m.id !== vald.folder_id)}
               konton={konton}
@@ -1610,9 +1682,13 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
   )
 }
 
-function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onRadera, onSkicka, onSvaraSenare, onStjarna, onTillbaka }: {
+function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar, onFlytta, onRadera, onSkicka, onSvaraSenare, onStjarna, onTillbaka }: {
   onTillbaka?: () => void
   mejl: Mejl
+  /** Hela konversationen, äldst först. Tom när mejlet står för sig självt. */
+  trad: Mejl[]
+  valdIdITrad: string | null
+  onValjITrad: (id: string) => void
   konto?: Konto
   mappar: Mapp[]
   konton: Konto[]
@@ -1792,6 +1868,41 @@ function Lasruta({ mejl, konto, mappar, konton, visaFlytt, setVisaFlytt, flyttar
         <p className="shrink-0 border-b border-good/30 bg-good/10 px-6 py-1.5 text-xs text-good">
           ✓ {kvitto}
         </p>
+      )}
+
+      {/* Konversationen. Äldst först, som i en chatt — man läser uppifrån.
+          Det öppna mejlet är markerat; de andra är en rad var med avsändare,
+          tid och början på texten. Inbäddad utfällning kommer senare; det här
+          löser den akuta delen, att man alls kommer åt de tidigare svaren
+          utan att leta i listan. */}
+      {trad.length > 1 && (
+        <div className="shrink-0 overflow-x-auto border-b border-border bg-surface/50 px-3 py-2">
+          <div className="flex gap-1.5">
+            {trad.map((t, i) => {
+              const aktiv = t.id === valdIdITrad
+              const vem = (t.from_name || t.from_email || '—').split(' ')[0]
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => onValjITrad(t.id)}
+                  aria-current={aktiv}
+                  title={`${t.from_name || t.from_email} · ${t.sent_at ? visaTid(t.sent_at) : ''}`}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
+                    aktiv
+                      ? 'border-accent bg-accent/15 font-medium text-accent-soft'
+                      : t.seen
+                        ? 'border-border text-muted hover:bg-card-hover hover:text-ink'
+                        : 'border-accent/40 font-medium text-ink hover:bg-card-hover'
+                  }`}
+                >
+                  <span className="text-muted/70">{i + 1}</span>
+                  <span className="max-w-24 truncate">{vem}</span>
+                  <span className="text-[10px] text-muted/70">{visaTid(t.sent_at)}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
       )}
 
       {/* Rubrikblocket står still — bara innehållet scrollar. Hålls smalt
