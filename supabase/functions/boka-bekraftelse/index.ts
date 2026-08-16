@@ -1,10 +1,14 @@
-// Skickar bekraftelsen till den som bokat en tid.
+// Skickar besked till den som bokat en tid: bekraftelse eller avbokning.
 //
-// EN sorts mejl, till adressen i en bokning som redan finns, med text som
+// TVA sorters mejl, till adressen i en bokning som redan finns, med text som
 // funktionen bygger sjalv. Det ar hela poangen med att den finns: mail-send
 // tar godtycklig mottagare och godtycklig text, sa att oppna DEN for
 // cron-nyckeln hade betytt att nyckeln kan skicka vad som helst i Pers namn.
-// Har kan en lackt nyckel i varsta fall skicka om en bekraftelse.
+// Har kan en lackt nyckel i varsta fall skicka om ett besked som redan gatt.
+//
+// Anledningen till avbokningen kommer fran databasen, inte fran anropet.
+// Annars hade nyckeln kunnat lagga godtycklig text i Pers namn i mejlet, och
+// da vore avgransningen ovan bortkastad.
 //
 // verify_jwt ar avstangd for att anroparen ar databasen via net.http_post, som
 // inte har nagon inloggad anvandare att lana en token av. Kontrollen sker har
@@ -116,20 +120,24 @@ Deno.serve(async (req: Request) => {
 
   if (!(await arBakgrundsjobb(req))) return svar({ fel: "Nekad" }, 401);
 
-  const { bokning } = await req.json().catch(() => ({}));
+  const { bokning, typ } = await req.json().catch(() => ({}));
   if (!bokning) return svar({ fel: "bokning saknas" }, 400);
+  const arAvbokning = typ === "avbokning";
 
   const { data: b } = await admin.from("hub_bokningar")
-    .select("id, namn, epost, meddelande, starts_at, ends_at, bekraftelse_at, lank_id, user_id")
+    .select("id, namn, epost, meddelande, starts_at, ends_at, bekraftelse_at, avbokad_at, avbokad_anledning, avbokning_mejl_at, lank_id, user_id")
     .eq("id", bokning).single();
   if (!b) return svar({ fel: "Bokningen hittades inte" }, 404);
   // Skicka aldrig om. En koad http_post som korts igen ska inte ge bokaren
   // ett andra mejl.
-  if (b.bekraftelse_at) return svar({ ok: true, redanSkickad: true });
+  if (arAvbokning ? b.avbokning_mejl_at : b.bekraftelse_at) return svar({ ok: true, redanSkickad: true });
+  if (arAvbokning && !b.avbokad_at) return svar({ fel: "Bokningen ar inte avbokad" }, 400);
 
   const { data: l } = await admin.from("hub_bokningslankar")
     .select("namn, plats, langd_min, konto_id, skicka_bekraftelse").eq("id", b.lank_id).single();
-  if (!l?.skicka_bekraftelse || !l.konto_id) return svar({ ok: true, avstangd: true });
+  // skicka_bekraftelse styr bara bekraftelsen. Ett installt mote ska den som
+  // bokat fa veta aven om Per stangt av kvittot pa sjalva bokningen.
+  if (!l?.konto_id || (!arAvbokning && !l.skicka_bekraftelse)) return svar({ ok: true, avstangd: true });
 
   const { data: k } = await admin.from("hub_mail_accounts")
     .select("id, user_id, email, label, provider, smtp_host, smtp_port, signature")
@@ -138,8 +146,29 @@ Deno.serve(async (req: Request) => {
 
   const nar = svenskTid(b.starts_at as string);
   const slut = svenskTid(b.ends_at as string);
-  const amne = `Bekräftelse: ${l.namn} — ${nar.dag} kl. ${nar.tid}`;
-  const text = [
+  const avslutning = k.signature
+    ? [`-- `, String(k.signature).trim()]
+    : [`Hälsningar`, k.label ?? k.email];
+
+  const amne = arAvbokning
+    ? `Inställt: ${l.namn} — ${nar.dag} kl. ${nar.tid}`
+    : `Bekräftelse: ${l.namn} — ${nar.dag} kl. ${nar.tid}`;
+
+  const text = (arAvbokning ? [
+    `Hej ${b.namn},`,
+    ``,
+    `Jag måste tyvärr ställa in vår tid.`,
+    ``,
+    `   ${l.namn}`,
+    `   ${nar.dag} kl. ${nar.tid}–${slut.tid}`,
+    ...(l.plats ? [`   ${l.plats}`] : []),
+    ``,
+    `Anledning: ${b.avbokad_anledning}`,
+    ``,
+    `Svara på det här mejlet så hittar vi en ny tid.`,
+    ``,
+    ...avslutning,
+  ] : [
     `Hej ${b.namn},`,
     ``,
     `Din tid är bokad.`,
@@ -151,8 +180,8 @@ Deno.serve(async (req: Request) => {
     ``,
     `Behöver du ändra eller avboka, svara på det här mejlet.`,
     ``,
-    ...(k.signature ? [`-- `, String(k.signature).trim()] : [`Hälsningar`, k.label ?? k.email]),
-  ].join("\n");
+    ...avslutning,
+  ]).join("\n");
 
   const brev = [
     "From: " + k.email,
@@ -222,13 +251,19 @@ Deno.serve(async (req: Request) => {
     if (!ok2xx(slutSvar)) throw new Error("Servern avvisade mejlet: " + slutSvar.trim().slice(0, 150));
     await smtp(c, "QUIT");
 
+    const nu = new Date().toISOString();
     await admin.from("hub_bokningar")
-      .update({ bekraftelse_at: new Date().toISOString(), bekraftelse_fel: null }).eq("id", b.id);
+      .update(arAvbokning
+        ? { avbokning_mejl_at: nu, bekraftelse_fel: null }
+        : { bekraftelse_at: nu, bekraftelse_fel: null })
+      .eq("id", b.id);
     return svar({ ok: true, till: b.epost });
   } catch (e) {
     const fel = String(e instanceof Error ? e.message : e).slice(0, 200);
-    // Felet sparas pa bokningen. Bokningen sjalv star kvar - en trasig SMTP far
-    // aldrig gora att tiden forsvinner.
+    // Felet sparas pa bokningsraden, som ar enda stallet det syns - mejlet gar
+    // i bakgrunden och ingen sitter och vantar pa svaret. Bokningen respektive
+    // avbokningen star kvar oavsett; en trasig SMTP far aldrig andra vad som
+    // galler i kalendern.
     await admin.from("hub_bokningar").update({ bekraftelse_fel: fel }).eq("id", b.id);
     return svar({ fel }, 500);
   } finally {

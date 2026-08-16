@@ -228,3 +228,73 @@ end $function$;
 -- Anon får köra exakt de här två och ingenting annat.
 grant execute on function public.hub_bokningssida(text) to anon, authenticated;
 grant execute on function public.hub_boka(text, timestamptz, text, text, text) to anon, authenticated;
+
+-- ── Avbokning ──────────────────────────────────────────────────────────────
+alter table public.hub_bokningar
+  add column if not exists avbokad_anledning text,
+  add column if not exists avbokning_mejl_at timestamptz;
+
+-- Avbokar en tid och köar mejlet till den som bokat.
+--
+-- Anledningen är obligatorisk. Att få "inställt" utan ett ord om varför är
+-- sämre än att inte få något alls, och den som bokat kan inte fråga tillbaka
+-- annat än genom att svara på mejlet.
+create or replace function public.hub_avboka(p_bokning uuid, p_anledning text)
+returns jsonb
+language plpgsql
+security definer
+set search_path to 'pg_catalog', 'public', 'net'
+as $function$
+declare
+  b public.hub_bokningar;
+  l public.hub_bokningslankar;
+  v_nyckel text;
+  v_mejl boolean := false;
+begin
+  if coalesce(trim(p_anledning), '') = '' then
+    return jsonb_build_object('ok', false, 'fel', 'Skriv en anledning — den går med i mejlet.');
+  end if;
+
+  -- Ägarkontrollen görs här eftersom funktionen är SECURITY DEFINER och alltså
+  -- går förbi radsäkerheten.
+  select * into b from public.hub_bokningar where id = p_bokning and user_id = auth.uid();
+  if not found then return jsonb_build_object('ok', false, 'fel', 'Bokningen hittades inte.'); end if;
+  if b.avbokad_at is not null then
+    return jsonb_build_object('ok', false, 'fel', 'Tiden är redan avbokad.');
+  end if;
+
+  select * into l from public.hub_bokningslankar where id = b.lank_id;
+
+  update public.hub_bokningar
+     set avbokad_at = now(), avbokad_anledning = trim(p_anledning)
+   where id = b.id;
+
+  -- Ta bort mötet ur kalendern samma väg som en vanlig radering, så Google får
+  -- veta om det via den kö som redan finns.
+  if b.event_id is not null then
+    update public.hub_events
+       set pending_op = 'radera', pending_scope = null,
+           pending_nasta = now(), pending_forsok = 0, pending_fel = null
+     where id = b.event_id;
+  end if;
+
+  -- Mejlet köas i bakgrunden. En trasig SMTP får inte göra att avbokningen
+  -- misslyckas — tiden är släppt oavsett, och det är det viktiga.
+  if l.konto_id is not null then
+    select nyckel into v_nyckel from public.hub_cron_nyckel;
+    if v_nyckel is not null then
+      perform net.http_post(
+        url := 'https://abwmdhvaxqlpyzgvuedj.supabase.co/functions/v1/boka-bekraftelse',
+        headers := jsonb_build_object('Content-Type', 'application/json', 'x-hub-cron', v_nyckel),
+        body := jsonb_build_object('bokning', b.id, 'typ', 'avbokning'),
+        timeout_milliseconds := 30000);
+      v_mejl := true;
+    end if;
+  end if;
+
+  return jsonb_build_object('ok', true, 'mejl_koat', v_mejl, 'till', b.epost);
+end $function$;
+
+-- Bara Per. Den publika sidan får boka, aldrig avboka åt någon annan.
+revoke execute on function public.hub_avboka(uuid, text) from anon;
+grant execute on function public.hub_avboka(uuid, text) to authenticated;

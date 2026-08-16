@@ -238,6 +238,18 @@ function LankKort({ lank, tider, bokningar, kalendrar, konton, adress, kopierad,
             className="w-full accent-(--color-accent)"
           />
         </div>
+        <div>
+          <Label>Kortaste varsel</Label>
+          <Select value={lank.varsel_timmar} onChange={(e) => spara({ varsel_timmar: Number(e.target.value) })}>
+            {[2, 4, 8, 12, 24, 48, 72].map((h) => (
+              <option key={h} value={h}>{h < 24 ? `${h} timmar` : `${h / 24} dygn`} innan</option>
+            ))}
+          </Select>
+          <p className="mt-1 text-xs text-muted">
+            Tider närmare än så visas inte alls, och går inte att boka ens med en gammal
+            länk i webbläsaren.
+          </p>
+        </div>
       </div>
 
       <div className="mt-5">
@@ -282,17 +294,94 @@ function LankKort({ lank, tider, bokningar, kalendrar, konton, adress, kopierad,
           <SectionTitle>Bokade tider ({bokningar.length})</SectionTitle>
           <ul className="space-y-1.5">
             {bokningar.map((b) => (
-              <li key={b.id} className="rounded-xl border border-border bg-surface px-3 py-2 text-sm">
-                <span className="font-medium capitalize">
-                  {format(parseISO(b.starts_at), 'EEE d MMM HH:mm', { locale: sv })}
-                </span>
-                <span className="text-muted"> · {b.namn} · {b.epost}</span>
-                {b.meddelande && <p className="mt-0.5 text-xs text-muted">{b.meddelande}</p>}
-              </li>
+              <BokadRad
+                key={b.id}
+                bokning={b}
+                harAvsandare={!!lank.konto_id}
+                onAvbokad={onAndrat}
+              />
             ))}
           </ul>
         </div>
       )}
     </Card>
+  )
+}
+
+/** En bokad tid, med avbokning bakom en knapp.
+ *
+ *  Anledningen skrivs här och sparas i databasen — mejlet hämtar den därifrån
+ *  i stället för att få den skickad till sig, så att bakgrundsnyckeln inte kan
+ *  användas för att lägga godtycklig text i Pers namn i ett utgående mejl. */
+function BokadRad({ bokning, harAvsandare, onAvbokad }: {
+  bokning: Bokning; harAvsandare: boolean; onAvbokad: () => void
+}) {
+  const [oppen, setOppen] = useState(false)
+  const [anledning, setAnledning] = useState('')
+  const [jobbar, setJobbar] = useState(false)
+  const [fel, setFel] = useState<string | null>(null)
+
+  async function avboka() {
+    setJobbar(true)
+    setFel(null)
+    try {
+      const { data, error } = await supabase.rpc('hub_avboka', {
+        p_bokning: bokning.id, p_anledning: anledning,
+      })
+      if (error) throw error
+      const svar = data as { ok: boolean; fel?: string }
+      if (!svar?.ok) { setFel(svar?.fel ?? 'Något gick fel.'); return }
+      onAvbokad()
+    } catch (e) {
+      setFel(e instanceof Error ? e.message : String(e))
+    } finally {
+      setJobbar(false)
+    }
+  }
+
+  return (
+    <li className="rounded-xl border border-border bg-surface px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+        <span className="font-medium capitalize">
+          {format(parseISO(bokning.starts_at), 'EEE d MMM HH:mm', { locale: sv })}
+        </span>
+        <span className="text-muted">· {bokning.namn} · {bokning.epost}</span>
+        {!oppen && (
+          <button
+            onClick={() => setOppen(true)}
+            className="ml-auto rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-card-hover hover:text-bad"
+          >
+            Avboka
+          </button>
+        )}
+      </div>
+      {bokning.meddelande && <p className="mt-0.5 text-xs text-muted">{bokning.meddelande}</p>}
+
+      {oppen && (
+        <div className="mt-2 space-y-2 border-t border-border pt-2">
+          <textarea
+            autoFocus
+            value={anledning}
+            onChange={(e) => setAnledning(e.target.value)}
+            rows={2}
+            placeholder="Varför ställs tiden in? Går med i mejlet."
+            className="w-full resize-y rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
+          />
+          {!harAvsandare && (
+            <p className="text-xs text-warn">
+              Länken har ingen avsändare vald, så {bokning.namn} får inget mejl. Tiden
+              släpps ändå.
+            </p>
+          )}
+          {fel && <p className="text-xs text-bad">{fel}</p>}
+          <div className="flex gap-2">
+            <Button variant="danger" onClick={avboka} disabled={jobbar || !anledning.trim()}>
+              {jobbar ? 'Avbokar…' : harAvsandare ? 'Ställ in och meddela' : 'Ställ in'}
+            </Button>
+            <Button variant="ghost" onClick={() => { setOppen(false); setFel(null) }}>Avbryt</Button>
+          </div>
+        </div>
+      )}
+    </li>
   )
 }
