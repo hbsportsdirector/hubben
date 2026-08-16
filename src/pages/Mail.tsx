@@ -471,7 +471,10 @@ export default function Mail() {
 
   // Kolumnbredder. Sparas per webbläsare — en bredd man dragit till rätta ska
   // inte behöva dras igen imorgon.
-  const [sidoBredd, setSidoBredd] = useState(() => Number(localStorage.getItem('hubben.mejl.sido')) || 208)
+  // 208 px räckte inte till femtio mappar i tre nivåer — namnen kapades innan
+  // man hann läsa dem. Gäller bara den som aldrig dragit i handtaget; ett
+  // sparat värde vinner fortfarande.
+  const [sidoBredd, setSidoBredd] = useState(() => Number(localStorage.getItem('hubben.mejl.sido')) || 248)
   const [listBredd, setListBredd] = useState(() => Number(localStorage.getItem('hubben.mejl.lista')) || 384)
   useEffect(() => { localStorage.setItem('hubben.mejl.sido', String(sidoBredd)) }, [sidoBredd])
   useEffect(() => { localStorage.setItem('hubben.mejl.lista', String(listBredd)) }, [listBredd])
@@ -988,7 +991,7 @@ export default function Mail() {
           <DagensSchema />
 
           <div>
-            <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Lådor</p>
+            <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Lådor</p>
             {LADOR.map((l) => (
               <button
                 key={l.id}
@@ -1009,7 +1012,7 @@ export default function Mail() {
           </div>
 
           <div className="min-h-0 flex-1">
-            <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
+            <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
               Mappar ({synligaMappar.length})
             </p>
             {mappar.length > 12 && (
@@ -1017,7 +1020,7 @@ export default function Mail() {
                 value={mappSok}
                 onChange={(e) => setMappSok(e.target.value)}
                 placeholder="Filtrera mappar…"
-                className="mb-1.5 w-full rounded-lg border border-border bg-surface px-2 py-1 text-[12px] text-ink outline-none placeholder:text-muted/60 focus:border-accent"
+                className="mb-2 w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-[13px] text-ink outline-none placeholder:text-muted/60 focus:border-accent"
               />
             )}
             <div className="max-h-[46vh] overflow-y-auto">
@@ -1026,10 +1029,12 @@ export default function Mail() {
                 if (!kontotsMappar.length) return null
                 const vagar = new Set(kontotsMappar.map((x) => x.path))
                 return (
-                  <div key={k.id} className="mb-2">
-                    {/* Kontot syns med sin färg, så man vet vems mapp man väljer */}
-                    <p className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium text-muted">
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: k.color }} />
+                  <div key={k.id} className="mb-3 border-t border-border/60 pt-2 first:mt-0 first:border-t-0 first:pt-0">
+                    {/* Kontot syns med sin färg, så man vet vems mapp man väljer.
+                        Egen linje ovanför: med tre konton och femtio mappar är
+                        gränsen mellan dem det som gör listan läsbar. */}
+                    <p className="mb-1 flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: k.color }} />
                       {k.label}
                     </p>
                     {kontotsMappar.map((m) => {
@@ -1060,9 +1065,27 @@ export default function Mail() {
                       return (
                         <div
                           key={m.id}
-                          style={{ paddingLeft: `${0.25 + djup * 0.8}rem` }}
-                          className={`group/mapp flex items-center rounded-lg pr-1 text-[12px] transition-colors ${
-                            mappFilter === m.id ? 'bg-accent/15 font-medium text-accent-soft' : 'text-muted hover:bg-card-hover hover:text-ink'
+                          // Indrag plus en tunn ledlinje i föräldrarnas spår.
+                          // Med bara indrag måste ögat mäta var en gren börjar.
+                          // Linjen ritas med en gradient och inte med box-shadow:
+                          // en inset-skugga fyller hela bandet fram till sin
+                          // förskjutning och hade blivit ett block, inte ett streck.
+                          style={{
+                            paddingLeft: `${0.3 + djup * 0.7}rem`,
+                            ...(djup > 0 && {
+                              backgroundImage: Array.from({ length: djup }, (_, n) => {
+                                const x = `${0.55 + n * 0.7}rem`
+                                return `linear-gradient(to right, transparent ${x}, var(--color-border) ${x}, var(--color-border) calc(${x} + 1px), transparent calc(${x} + 1px))`
+                              }).join(', '),
+                            }),
+                          }}
+                          // 13px och nästan full textfärg. Förut 12px i muted,
+                          // vilket är under vad man läser bekvämt — särskilt
+                          // med trettiosju mappar staplade på varandra.
+                          className={`group/mapp my-px flex items-center rounded-lg pr-1 text-[13px] leading-tight transition-colors ${
+                            mappFilter === m.id
+                              ? 'bg-accent/20 font-medium text-accent-soft'
+                              : 'text-ink/80 hover:bg-card-hover hover:text-ink'
                           }`}
                         >
                           {/* Pilen fäller ut och väljer inte mappen. Två saker
@@ -1076,7 +1099,7 @@ export default function Mail() {
                               })}
                               aria-label={oppen ? `Fäll ihop ${m.name}` : `Fäll ut ${m.name}`}
                               aria-expanded={oppen}
-                              className="shrink-0 px-1 py-1 text-[10px] text-muted/70 hover:text-ink"
+                              className="shrink-0 px-1 py-1 text-[11px] text-muted hover:text-ink"
                             >
                               {oppen ? '▾' : '▸'}
                             </button>
@@ -1101,7 +1124,7 @@ export default function Mail() {
                               }
                             }}
                             title={m.path}
-                            className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left"
+                            className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
                           >
                             <span className="min-w-0 flex-1">
                               <span className="block truncate">{m.name}</span>
@@ -1110,7 +1133,9 @@ export default function Mail() {
                                   hemma, så man ser skillnad på två som heter
                                   samma sak i olika grenar. */}
                               {brett && sidoBredd > 300 && foraldern(m.path) && (
-                                <span className="block truncate text-[10px] text-muted/50">
+                                // Var 10px i muted/50 — alltså halva opaciteten
+                                // av en redan dämpad färg. Oläsbart i praktiken.
+                                <span className="block truncate text-[11px] text-muted">
                                   {m.path
                                     .replace(/^INBOX[./]/, '')
                                     .split(/[./]/)
