@@ -128,6 +128,21 @@ begin
   );
 end $function$;
 
+-- ── Bekräftelse till den som bokat ─────────────────────────────────────────
+--
+-- Skickas av edge-funktionen boka-bekraftelse, INTE av mail-send. Skälet är
+-- avgränsning: mail-send tar godtycklig mottagare och godtycklig text, så att
+-- öppna den för cron-nyckeln hade betytt att nyckeln kan skicka vad som helst
+-- i Pers namn. boka-bekraftelse kan bara skicka EN sorts mejl, till adressen i
+-- en bokning som redan finns, med text den bygger själv.
+alter table public.hub_bokningslankar
+  add column if not exists konto_id uuid references public.hub_mail_accounts(id) on delete set null,
+  add column if not exists skicka_bekraftelse boolean not null default true;
+
+alter table public.hub_bokningar
+  add column if not exists bekraftelse_at timestamptz,
+  add column if not exists bekraftelse_fel text;
+
 -- ── Boka ───────────────────────────────────────────────────────────────────
 -- Tiden kontrolleras mot samma uträkning som sidan visar. Klienten får aldrig
 -- bestämma vad som är ledigt — den kan bara föreslå en tid som funktionen
@@ -137,13 +152,15 @@ create or replace function public.hub_boka(
 returns jsonb
 language plpgsql
 security definer
-set search_path to 'pg_catalog', 'public'
+set search_path to 'pg_catalog', 'public', 'net'
 as $function$
 declare
   l public.hub_bokningslankar;
   v_sida jsonb;
   v_slut timestamptz;
   v_event uuid;
+  v_bokning uuid;
+  v_nyckel text;
 begin
   if coalesce(trim(p_namn), '') = '' or coalesce(trim(p_epost), '') = '' then
     return jsonb_build_object('ok', false, 'fel', 'Namn och mejladress behövs.');
@@ -188,7 +205,22 @@ begin
 
   insert into public.hub_bokningar (lank_id, user_id, event_id, namn, epost, meddelande, starts_at, ends_at)
   values (l.id, l.user_id, v_event, trim(p_namn), trim(p_epost),
-          nullif(trim(coalesce(p_meddelande,'')), ''), p_start, v_slut);
+          nullif(trim(coalesce(p_meddelande,'')), ''), p_start, v_slut)
+  returning id into v_bokning;
+
+  -- Bekräftelsen skickas i bakgrunden. net.http_post köar anropet, så den som
+  -- bokar får sitt svar direkt oavsett hur långsam mejlservern är — och en
+  -- trasig SMTP får aldrig fälla själva bokningen.
+  if l.skicka_bekraftelse and l.konto_id is not null then
+    select nyckel into v_nyckel from public.hub_cron_nyckel;
+    if v_nyckel is not null then
+      perform net.http_post(
+        url := 'https://abwmdhvaxqlpyzgvuedj.supabase.co/functions/v1/boka-bekraftelse',
+        headers := jsonb_build_object('Content-Type', 'application/json', 'x-hub-cron', v_nyckel),
+        body := jsonb_build_object('bokning', v_bokning),
+        timeout_milliseconds := 30000);
+    end if;
+  end if;
 
   return jsonb_build_object('ok', true, 'start', p_start, 'slut', v_slut, 'namn', l.namn);
 end $function$;
@@ -196,24 +228,3 @@ end $function$;
 -- Anon får köra exakt de här två och ingenting annat.
 grant execute on function public.hub_bokningssida(text) to anon, authenticated;
 grant execute on function public.hub_boka(text, timestamptz, text, text, text) to anon, authenticated;
-
--- ── Bekräftelse till den som bokat (tillägg) ───────────────────────────────
---
--- Skickas av edge-funktionen boka-bekraftelse, INTE av mail-send. Skälet är
--- avgränsning: mail-send tar godtycklig mottagare och godtycklig text, så att
--- öppna den för cron-nyckeln hade betytt att nyckeln kan skicka vad som helst
--- i Pers namn. boka-bekraftelse kan bara skicka EN sorts mejl, till adressen i
--- en bokning som redan finns, med text den bygger själv.
-alter table public.hub_bokningslankar
-  add column if not exists konto_id uuid references public.hub_mail_accounts(id) on delete set null,
-  add column if not exists skicka_bekraftelse boolean not null default true;
-
-alter table public.hub_bokningar
-  add column if not exists bekraftelse_at timestamptz,
-  add column if not exists bekraftelse_fel text;
-
--- hub_boka avslutas med ett net.http_post till boka-bekraftelse när länken har
--- ett avsändarkonto. Anropet KÖAS, så den som bokar får sitt svar direkt
--- oavsett hur långsam mejlservern är — och en trasig SMTP får aldrig fälla
--- själva bokningen. Se den fullständiga definitionen i migrationen
--- 20260816_hub_boka_bekraftelse (applicerad via MCP).
