@@ -8,10 +8,13 @@
 -- Inget filINNEHÅLL sparas — bara namn, typ, ägare och länk. Det som ska
 -- öppnas eller bifogas hämtas färskt från Google i det ögonblicket.
 --
--- Scopet är drive.readonly, vilket Google klassar som "restricted". Det kräver
--- en betald tredjepartsgranskning (CASA) i en verifierad app, men inte i en
--- app som står kvar i Testing med Per som enda testanvändare. Priset är att
--- refresh-tokenet dör efter sju dagar. Se google-oauth-start.
+-- Scopet är drive.readonly, vilket Google klassar som "restricted". En
+-- verifierad app måste gå igenom en betald tredjepartsgranskning (CASA) för
+-- att få använda det. Hubben är inte verifierad och behöver inte bli det:
+-- appen står som In production med User type External, och då räcker det att
+-- Per klickar förbi rutan om ogranskad app. Se google-oauth-start för de två
+-- begränsningar som följer med, och för varför appen aldrig får sättas
+-- tillbaka till Testing.
 create extension if not exists pg_trgm with schema extensions;
 
 create table if not exists public.hub_drive_filer (

@@ -15,15 +15,22 @@ const A = Deno.env.get("SUPABASE_ANON_KEY")!;
 const enc = new TextEncoder();
 
 const AUKTORITET = "https://accounts.google.com/o/oauth2/v2/auth";
-// drive.readonly ar ett "restricted" scope. Google kraver en betald
-// tredjepartsgranskning (CASA) for att slappa det i en verifierad app, men
-// inte for en app som star kvar i Testing med Per som enda testanvandare.
-// Priset for det ar att refresh-tokenet dor efter sju dagar och maste fornyas
-// harifran - kalendern hanger pa samma godkannande.
+// drive.readonly ar ett "restricted" scope. En verifierad app maste ga igenom
+// en betald tredjepartsgranskning (CASA) for att fa anvanda det. Hubben ar
+// inte verifierad, och behover inte bli det: appen star som In production med
+// User type External, och da racker det att Per klickar forbi rutan om
+// ogranskad app. Kontrollerat i Google Auth Platform 2026-08-17.
 //
-// Alternativet, drive.file, slipper allt det men later Hubben se bara filer
-// Per plockat fram i Googles egen valjare. Da vore den egna sokningen
-// meningslos, och den var hela poangen.
+// Tva sifferbegransningar foljer med, och bada ar irrelevanta har: hogst 100
+// anvandare far nagonsin godkanna appen (det ar 1 nu), och rutan om ogranskad
+// app visas varje gang. Den sjudagarssparr pa refresh-tokens som ofta namns
+// galler bara appar i Testing - INTE den har. Byt darfor aldrig tillbaka till
+// Testing; det skulle gora att bade Drive och kalendern slutar fungera efter
+// en vecka.
+//
+// Alternativet, drive.file, slipper det restricted-scopet helt men later
+// Hubben se bara filer Per plockat fram i Googles egen valjare. Da vore den
+// egna sokningen meningslos, och den var hela poangen.
 const SCOPE = [
   "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/drive.readonly",
