@@ -72,6 +72,10 @@ function laddaNer(blob: Blob, filnamn: string) {
 
 /* ── Datahämtning ─────────────────────────────────────────── */
 
+/** Hur mycket som får hämtas i förväg. Se effekten i Bilagor. */
+const FORHANDS_MAX = 2 * 1024 * 1024
+const FORHANDS_ANTAL = 3
+
 async function hamtaBytes(attachmentId: string): Promise<Blob> {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) throw new Error('Inte inloggad')
@@ -135,6 +139,41 @@ export function Bilagor({ msgId, aktiv }: { msgId: string; aktiv: boolean }) {
     cache.current.set(b.id, p)
     return p
   }, [])
+
+  // Hämtas i bakgrunden medan mejlet läses, i stället för att klicket ska
+  // vara startskottet. Mätt på en riktig bilaga: 1 134 ms för själva
+  // hämtningen, och då är kallstarten av funktionen inte inräknad — den
+  // anropas så sällan att den aldrig ligger varm.
+  //
+  // Taken är till för telefonen. Tre filer à 2 MB är det mesta som kan
+  // hämtas i onödan, och det är en storlek man kan slösa bort utan att någon
+  // märker det på en mobilräkning.
+  useEffect(() => {
+    if (!bilagor?.length) return
+    let avbruten = false
+    const kandidater = bilagor
+      .filter((b) => !b.inline && (b.size_bytes ?? 0) <= FORHANDS_MAX)
+      .slice(0, FORHANDS_ANTAL)
+    ;(async () => {
+      for (const b of kandidater) {
+        if (avbruten) return
+        // En i taget. Varje hämtning öppnar en egen IMAP-anslutning, och tre
+        // samtidiga inloggningar mot samma server är illa sett.
+        await hamta(b).catch(() => { /* tyst — ingen har bett om den än */ })
+      }
+    })()
+    return () => { avbruten = true }
+  }, [bilagor, hamta])
+
+  // pdf.js väger 1,7 MB och laddas annars först vid klicket. Ligger det en
+  // PDF i listan kommer den nästan säkert att öppnas, så hämta hem läsaren
+  // medan mejlet läses. Webbläsaren minns modulen, så PdfVisare får den
+  // direkt sedan.
+  useEffect(() => {
+    if (!bilagor?.some((b) => klassa(b) === 'pdf')) return
+    import('pdfjs-dist').catch(() => { /* öppnandet får visa felet */ })
+    import('pdfjs-dist/build/pdf.worker.min.mjs?url').catch(() => { /* d:o */ })
+  }, [bilagor])
 
   if (!bilagor || bilagor.length === 0) return null
 
