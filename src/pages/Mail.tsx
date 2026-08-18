@@ -1516,8 +1516,9 @@ export default function Mail() {
         </div>
       )}
 
-      <NyttMejl
-        open={visaNytt}
+      {/* Monteras forst nar den oppnas, i stallet for att staa dold och
+          nollstallas av en effekt. Se NyttMejl. */}
+      {visaNytt && <NyttMejl
         onClose={() => setVisaNytt(false)}
         konton={konton}
         forvaltKonto={kontoFilter !== 'alla' ? kontoFilter : konton[0]?.id}
@@ -1527,7 +1528,7 @@ export default function Mail() {
           if (!svar?.fel) setTimeout(() => laddaMeta(), 8000)
           return svar
         })}
-      />
+      />}
 
       {/* Kopian till Skickat gjordes i bakgrunden och gick fel. Ingen väntade
           på den, så den får säga till här i stället. */}
@@ -1684,14 +1685,22 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
   )
 }
 
-function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
-  open: boolean
+/** Skrivrutan for ett nytt mejl.
+ *
+ *  Monteras av foraldern forst nar den oppnas, och tomningen sker darfor
+ *  genom att den avmonteras nar man stanger. Forut lag den kvar dold och
+ *  nollstalldes av en effekt med [open, forvaltKonto, konton] som beroenden -
+ *  och konton ar en array som laddaMeta() byter ut mot en ny med samma
+ *  innehall. Den automatiska synken var annan minut gjorde alltsa att ett
+ *  paborjat mejl raderade sig sjalvt medan Per skrev. Lagg aldrig tillbaka en
+ *  effekt som nollstaller falten har. */
+function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
   onClose: () => void
   konton: Konto[]
   forvaltKonto?: string
   onSkicka: (kropp: Record<string, unknown>) => Promise<{ fel?: string }>
 }) {
-  const [fran, setFran] = useState('')
+  const [fran, setFran] = useState(() => forvaltKonto ?? konton[0]?.id ?? '')
   const [till, setTill] = useState('')
   const [amne, setAmne] = useState('')
   const [text, setText] = useState('')
@@ -1699,13 +1708,6 @@ function NyttMejl({ open, onClose, konton, forvaltKonto, onSkicka }: {
   const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string } | null>(null)
   const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
 
-  useEffect(() => {
-    if (!open) return
-    setFran(forvaltKonto ?? konton[0]?.id ?? '')
-    setTill(''); setAmne(''); setText(''); setResultat(null); setBilagor([])
-  }, [open, forvaltKonto, konton])
-
-  if (!open) return null
   const valtKonto = konton.find((k) => k.id === fran)
 
   return (
