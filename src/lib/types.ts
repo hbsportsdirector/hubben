@@ -165,6 +165,10 @@ export interface HubStock {
   label: string | null
   sort_order: number
   created_at: string
+  /** Eget innehav. Kursen anges i noteringens EGEN valuta — se migrationen. */
+  kopt_datum: string | null
+  kopt_kurs: number | null
+  kopt_antal: number | null
 }
 
 export interface MarketQuote {
