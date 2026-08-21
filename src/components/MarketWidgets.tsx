@@ -4,6 +4,13 @@ import { getUserId } from '../lib/data'
 import type { HubStock, MarketQuote } from '../lib/types'
 import { Card, SectionTitle, Button, Input, EmptyState } from './ui'
 
+// Kryptovalutor heter alltid PAR hos Yahoo. Skriver man bara "XRP" får man
+// en börshandlad fond på NYSE Arca med samma namn — rätt namn, fel
+// instrument, och ingenting i gränssnittet avslöjar förväxlingen. Därför
+// ligger de färdiga här i stället för att skrivas för hand.
+//
+// XRP-SEK finns inte hos Yahoo; bara USD och EUR. Kursen visas alltså i
+// dollar, och kortet skriver ut valutan.
 const SUGGESTIONS: { symbol: string; label: string }[] = [
   { symbol: '^OMX', label: 'OMXS30' },
   { symbol: 'VOLV-B.ST', label: 'Volvo B' },
@@ -11,6 +18,8 @@ const SUGGESTIONS: { symbol: string; label: string }[] = [
   { symbol: 'USDSEK=X', label: 'USD/SEK' },
   { symbol: 'EURSEK=X', label: 'EUR/SEK' },
   { symbol: 'BTC-USD', label: 'Bitcoin' },
+  { symbol: 'XRP-USD', label: 'XRP' },
+  { symbol: 'ETH-USD', label: 'Ethereum' },
 ]
 
 export default function MarketWidgets() {
