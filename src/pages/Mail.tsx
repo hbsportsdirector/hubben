@@ -1087,9 +1087,16 @@ export default function Mail() {
         <p className="rounded-xl border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">✓ {regelKvitto}</p>
       )}
 
+      {/* Två olika sätt att sätta höjd på telefonen, och skillnaden är hela
+          poängen. Listan ska hållas kvar innanför skärmen och scrolla inuti,
+          alltså fast höjd. Ett öppnat mejl ska i stället få ta den plats det
+          behöver och låta sidan scrolla — mätningen har ett golv på 320 px,
+          och med chipsen och sökrutan ovanför slår golvet till nästan alltid.
+          Läsrutans fasta delar äter då upp alltihop och brödtexten, som är
+          det enda som får ge vika, krymper till ingenting. */}
       <div
         ref={panelRef}
-        style={panelHojd ? { height: panelHojd } : undefined}
+        style={panelHojd ? (vald ? { minHeight: panelHojd } : { height: panelHojd }) : undefined}
         className="flex gap-3 lg:h-[calc(100dvh-13rem)] xl:h-[calc(100dvh-11.5rem)]"
       >
         {/* Lådor, konton och mappar */}
@@ -1443,7 +1450,7 @@ export default function Mail() {
         <Delare onDra={(dx) => setListBredd((b) => klam(b + dx, 260, 760))} />
 
         {/* Läsruta */}
-        <div className={`min-w-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card lg:block ${
+        <div className={`min-w-0 flex-1 rounded-2xl border border-border bg-card lg:block lg:overflow-hidden ${
           vald ? 'block' : 'hidden'
         }`}>
           {vald ? (
@@ -1983,7 +1990,9 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
   const allaMottagare = (mejl.to_emails ?? []).filter(Boolean).join(', ')
 
   return (
-    <div className="flex h-full flex-col">
+    // h-full bara från lg. På telefonen finns ingen höjd att fylla — där
+    // växer rutan med mejlet och sidan scrollar.
+    <div className="flex flex-col lg:h-full">
       <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-2 py-1">
         {/* På telefonen har läsrutan tagit listans plats — den här tar en tillbaka */}
         {onTillbaka && (
@@ -2138,8 +2147,8 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
       {/* Bilagelisten ligger utanför det som scrollar — den ska alltid synas */}
       <Bilagor msgId={mejl.id} aktiv={!hamtar} />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+      <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-hidden">
+        <div className="flex flex-col px-4 py-3 lg:min-h-0 lg:flex-1">
           {hamtar && <Spinner />}
           {fel && <p className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">Kunde inte hämta brödtexten: {fel}</p>}
           {kropp && (
@@ -2180,11 +2189,11 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
                   referrerPolicy="no-referrer"
                   srcDoc={`<base target="_blank" rel="noopener noreferrer"><style>html,body{background:#eeece7;color:#1f2937;margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.6;padding:16px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}a{color:#1d4ed8}</style>${kropp.html_body}`}
                   style={dampad ? { filter: 'brightness(0.68) sepia(0.12) contrast(0.96)' } : undefined}
-                  className="min-h-0 w-full flex-1 rounded-xl border border-border bg-white"
+                  className="h-[70vh] w-full rounded-xl border border-border bg-white lg:h-auto lg:min-h-0 lg:flex-1"
                   title="Mejlinnehåll"
                 />
               ) : (
-                <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
                   <pre className="max-w-prose whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-ink/90">
                     {stada(kropp.text_body) || '(ingen textversion)'}
                   </pre>
@@ -2210,8 +2219,8 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
         ) : (
           // Samma tak som Nytt mejl: rutan tar aldrig mer än sin del av
           // läsrutan, och knappraden står stilla längst ner.
-          <div className="flex max-h-[60vh] min-h-0 flex-col rounded-xl border border-border bg-surface">
-            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
+          <div className="flex flex-col rounded-xl border border-border bg-surface lg:max-h-[60vh] lg:min-h-0">
+            <div className="flex flex-col gap-2 p-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="text-muted">Från</span>
               <select
