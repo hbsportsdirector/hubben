@@ -95,6 +95,8 @@ interface Konto {
   id: string; label: string; color: string; email: string; signature: string
   /** Satt om kopian till Skickat misslyckades efter senaste sandningen */
   sent_kopia_fel: string | null
+  /** Satt om senaste sandningen inte gick igenom alls */
+  sandning_fel: string | null
 }
 interface Mapp {
   id: string
@@ -323,6 +325,7 @@ export default function Mail() {
   const [visaSorterade, setVisaSorterade] = useState(false)
   const [angraKvar, setAngraKvar] = useState<number | null>(null)
   const angraRef = useRef<(() => void) | null>(null)
+  const skickaNuRef = useRef<(() => void) | null>(null)
   const [enkelFlytt, setEnkelFlytt] = useState<Mejl | null>(null)
   const [synkar, setSynkar] = useState(false)
   const [senastSynk, setSenastSynk] = useState<string | null>(null)
@@ -344,24 +347,43 @@ export default function Mail() {
         kvar -= 1
         setAngraKvar(kvar > 0 ? kvar : null)
       }, 1000)
-      const timer = setTimeout(async () => {
+      const stad = () => {
         clearInterval(rakna)
         setAngraKvar(null)
         angraRef.current = null
+        skickaNuRef.current = null
+      }
+      const timer = setTimeout(async () => {
+        stad()
         klar((await gor()) ?? {})
       }, ANGRA_SEKUNDER * 1000)
       angraRef.current = () => {
         clearTimeout(timer)
-        clearInterval(rakna)
-        setAngraKvar(null)
-        angraRef.current = null
+        stad()
         klar({ fel: 'Sändningen avbröts — mejlet ligger kvar här.' })
+      }
+      skickaNuRef.current = () => {
+        clearTimeout(timer)
+        stad()
+        gor().then((r) => klar(r ?? {}))
       }
     })
   }
 
-  // Timers får inte leva vidare om vyn lämnas mitt i en nedräkning
-  useEffect(() => () => { angraRef.current?.() }, [])
+  // Lämnar man vyn mitt i nedräkningen ska mejlet gå iväg, inte tyst
+  // strykas: det enda man sagt till appen är Skicka. Går det fel har svaret
+  // ingen ruta att komma tillbaka till, och då står felet kvar på kontoraden
+  // i stället — se hub_mail_accounts.sandning_fel.
+  useEffect(() => () => { skickaNuRef.current?.() }, [])
+
+  // Stänger man fliken mitt i nedräkningen hinner ingenting skickas — där
+  // hjälper ingen kod, bara en fråga innan sidan hinner stängas.
+  useEffect(() => {
+    if (angraKvar === null) return
+    const varna = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', varna)
+    return () => window.removeEventListener('beforeunload', varna)
+  }, [angraKvar])
 
   async function anropaFunktion(namn: string, kropp: Record<string, unknown>) {
     const { data: { session } } = await supabase.auth.getSession()
@@ -420,7 +442,7 @@ export default function Mail() {
 
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
-      supabase.from('hub_mail_accounts').select('id, label, color, email, signature, sent_kopia_fel').eq('active', true).order('sort_order'),
+      supabase.from('hub_mail_accounts').select('id, label, color, email, signature, sent_kopia_fel, sandning_fel').eq('active', true).order('sort_order'),
       supabase.from('hub_folders').select('id, path, name, role, account_id, total_count, unseen_count, last_synced_at, hidden').order('path'),
     ])
     setKonton(k.data ?? [])
@@ -1448,7 +1470,7 @@ export default function Mail() {
                 const { vidarebefordran, ...rest } = kropp as Record<string, unknown>
                 const svar = await anropaFunktion('mail-send',
                   vidarebefordran ? rest : { ...rest, inReplyToId: vald.id })
-                if (svar?.fel) return { fel: svar.fel as string }
+                if (svar?.fel) { laddaMeta(); return { fel: svar.fel as string } }
                 uppdatera(vald.id, { reply_later: false } as Partial<Mejl>)
                 setTimeout(() => laddaMeta(), 8000) // kopian till Skickat gors i bakgrunden
                 return {}
@@ -1525,33 +1547,61 @@ export default function Mail() {
         onSkicka={(kropp) => medAngra(async () => {
           const svar = await anropaFunktion('mail-send', kropp)
           // Kopian till Skickat görs efter svaret — kolla utfallet strax efteråt
-          if (!svar?.fel) setTimeout(() => laddaMeta(), 8000)
+          if (svar?.fel) laddaMeta(); else setTimeout(() => laddaMeta(), 8000)
           return svar
         })}
       />}
 
-      {/* Kopian till Skickat gjordes i bakgrunden och gick fel. Ingen väntade
-          på den, så den får säga till här i stället. */}
-      {konton.filter((k) => k.sent_kopia_fel).map((k) => (
-        <div key={k.id} className="fixed bottom-4 left-4 z-50 max-w-sm rounded-xl border border-warn/40 bg-card px-4 py-3 shadow-2xl">
-          <p className="text-sm font-medium text-warn">Mejlet skickades, men inte kopian</p>
-          <p className="mt-1 text-xs text-muted">
-            {k.label}: {k.sent_kopia_fel}
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            Mottagaren har fått mejlet — det saknas bara i din Skickat-mapp.
-          </p>
-          <button
-            onClick={async () => {
-              await supabase.from('hub_mail_accounts').update({ sent_kopia_fel: null }).eq('id', k.id).throwOnError()
-              laddaMeta()
-            }}
-            className="mt-2 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"
-          >
-            Uppfattat
-          </button>
-        </div>
-      ))}
+      {/* Två sorters efterhandsbesked om senaste sändningen, båda hämtade
+          från kontoraden. De står kvar tills de kvitteras — den som stängde
+          skrivrutan eller bytte sida ska ändå få veta hur det gick. */}
+      <div className="fixed bottom-4 left-4 z-50 flex max-w-sm flex-col gap-2">
+        {/* Mejlet gick aldrig iväg. Det tyngre av de två beskeden, så det
+            står överst. */}
+        {konton.filter((k) => k.sandning_fel).map((k) => (
+          <div key={k.id} className="rounded-xl border border-bad/40 bg-card px-4 py-3 shadow-2xl">
+            <p className="text-sm font-medium text-bad">Mejlet skickades inte</p>
+            <p className="mt-1 text-xs text-muted">
+              {k.label}: {k.sandning_fel}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Mejlet finns inte sparat någonstans — skriv det på nytt när felet är avhjälpt.
+            </p>
+            <button
+              onClick={async () => {
+                await supabase.from('hub_mail_accounts').update({ sandning_fel: null }).eq('id', k.id).throwOnError()
+                laddaMeta()
+              }}
+              className="mt-2 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"
+            >
+              Uppfattat
+            </button>
+          </div>
+        ))}
+
+        {/* Kopian till Skickat gjordes i bakgrunden och gick fel. Ingen väntade
+            på den, så den får säga till här i stället. */}
+        {konton.filter((k) => k.sent_kopia_fel).map((k) => (
+          <div key={k.id} className="rounded-xl border border-warn/40 bg-card px-4 py-3 shadow-2xl">
+            <p className="text-sm font-medium text-warn">Mejlet skickades, men inte kopian</p>
+            <p className="mt-1 text-xs text-muted">
+              {k.label}: {k.sent_kopia_fel}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Mottagaren har fått mejlet — det saknas bara i din Skickat-mapp.
+            </p>
+            <button
+              onClick={async () => {
+                await supabase.from('hub_mail_accounts').update({ sent_kopia_fel: null }).eq('id', k.id).throwOnError()
+                laddaMeta()
+              }}
+              className="mt-2 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"
+            >
+              Uppfattat
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1710,13 +1760,18 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
 
   const valtKonto = konton.find((k) => k.id === fran)
 
+  // Under sändningen — inklusive ångra-nedräkningen — går rutan inte att
+  // stänga. Stängde man den förr försvann både felmeddelandet och texten man
+  // skrivit, och kvar blev intrycket att mejlet gått iväg.
+  const stang = () => { if (!skickar) onClose() }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[8vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[8vh]" onMouseDown={(e) => e.target === e.currentTarget && stang()}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div className="relative z-10 w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h3 className="font-semibold">Nytt mejl</h3>
-          <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">✕</button>
+          <button onClick={stang} disabled={skickar} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink disabled:opacity-40" aria-label="Stäng">✕</button>
         </div>
 
         <div className="space-y-2 p-5">
@@ -1770,7 +1825,7 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
           )}
 
           <div className="flex items-center justify-between pt-1">
-            <button onClick={onClose} className="text-xs text-muted hover:text-ink">Avbryt</button>
+            <button onClick={stang} disabled={skickar} className="text-xs text-muted hover:text-ink disabled:opacity-40">Avbryt</button>
             <button
               disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
               onClick={async () => {
@@ -2204,7 +2259,13 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
             )}
 
             <div className="flex items-center justify-between">
-              <button onClick={() => setLage(null)} className="text-xs text-muted hover:text-ink">Avbryt</button>
+              <button
+                onClick={() => { if (!skickar) setLage(null) }}
+                disabled={skickar}
+                className="text-xs text-muted hover:text-ink disabled:opacity-40"
+              >
+                Avbryt
+              </button>
               <button
                 disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
                 onClick={async () => {
