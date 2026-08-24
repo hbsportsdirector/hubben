@@ -1,5 +1,11 @@
-// Hubben: IMAP-synk. Utan argument synkas INBOX på alla konton.
+// Hubben: IMAP-synk. Utan argument synkas Inkorgen och Skickat på alla konton.
 // Med { folderId } synkas den mappen (lat synk när man öppnar den första gången).
+//
+// Skickat följer med i varje varv sedan 2026-08-24. Förr synkades bara
+// INBOX, så mejl man skickat från Hubben låg kvar på mejlservern utan att
+// någonsin dyka upp i appens Skickat — mappen stod orörd i två veckor och
+// såg tom ut fast servern hade allt. Bägge mapparna går på SAMMA
+// inloggning; mejlservrar räknar anslutningar, inte kommandon.
 //
 // Två sorters anropare släpps in, och ingen tredje:
 //   * en inloggad användare, som får synka sina egna konton
@@ -186,27 +192,57 @@ function kodaUtf7(s: string): string {
   });
 }
 
-async function synkaMapp(
+interface Mappval { path: string; id: string | null }
+
+/** Flera mappar på en enda inloggning. Ett fel i en mapp fäller inte de
+ *  andra - varje mapp får sin egen rad i loggen. */
+async function synkaMappar(
   admin: ReturnType<typeof createClient>,
   konto: Record<string, unknown>,
   authRad: string,
+  mappar: Mappval[],
+) {
+  let conn: Deno.TlsConn | null = null;
+  // Taggarna måste vara unika inom en session. Med två mappar på samma
+  // anslutning räcker inte längre fasta a2 och a3.
+  let raknare = 0;
+  const tagg = () => "a" + (++raknare);
+  try {
+    conn = await Deno.connectTls({ hostname: konto.imap_host as string, port: (konto.imap_port as number) ?? 993 });
+    await las(conn, "\\*", 5000);
+    const inlTag = tagg();
+    const inl = await cmd(conn, inlTag, authRad);
+    if (!new RegExp("^" + inlTag + " OK", "mi").test(dec.decode(inl))) {
+      return mappar.map((m) => ({ konto: konto.label, mapp: m.path, fel: "Inloggning nekad" }));
+    }
+    const loggar: Record<string, unknown>[] = [];
+    for (const m of mappar) {
+      loggar.push(await synkaEnMapp(admin, konto, conn, tagg, m.path, m.id));
+    }
+    await cmd(conn, tagg(), "LOGOUT");
+    return loggar;
+  } catch (e) {
+    return [{ konto: konto.label, mapp: mappar.map((m) => m.path).join(", "), fel: String(e).slice(0, 250) }];
+  } finally {
+    try { conn?.close(); } catch { /* redan stängd */ }
+  }
+}
+
+/** En mapp, på en anslutning som redan är inloggad. */
+async function synkaEnMapp(
+  admin: ReturnType<typeof createClient>,
+  konto: Record<string, unknown>,
+  conn: Deno.TlsConn,
+  tagg: () => string,
   mappPath: string,
   mappId: string | null,
 ) {
   const logg: Record<string, unknown> = { konto: konto.label, mapp: mappPath };
-  let conn: Deno.TlsConn | null = null;
   const t0 = Date.now();
   try {
-    conn = await Deno.connectTls({ hostname: konto.imap_host as string, port: (konto.imap_port as number) ?? 993 });
-    await las(conn, "\\*", 5000);
-    const inl = await cmd(conn, "a1", authRad);
-    if (!/^a1 OK/mi.test(dec.decode(inl))) {
-      logg.fel = "Inloggning nekad";
-      return logg;
-    }
-
-    const selText = dec.decode(await cmd(conn, "a2", `SELECT "${kodaUtf7(mappPath).replace(/"/g, '\\"')}"`));
-    if (!/^a2 OK/mi.test(selText)) { logg.fel = "Kunde inte öppna mappen"; return logg; }
+    const selTag = tagg();
+    const selText = dec.decode(await cmd(conn, selTag, `SELECT "${kodaUtf7(mappPath).replace(/"/g, '\\"')}"`));
+    if (!new RegExp("^" + selTag + " OK", "mi").test(selText)) { logg.fel = "Kunde inte öppna mappen"; return logg; }
     const exists = Number(selText.match(/^\* (\d+) EXISTS/mi)?.[1] ?? 0);
     const uidvalidity = Number(plockUt(selText, "UIDVALIDITY") ?? 0);
     logg.iMappen = exists;
@@ -234,7 +270,7 @@ async function synkaMapp(
 
     const anvandUid = lastUid > 0;
     const spann = anvandUid ? `${lastUid + 1}:*` : `${Math.max(1, exists - MAX_FORSTA + 1)}:${exists}`;
-    const svar = await cmd(conn, "a3", `${anvandUid ? "UID " : ""}FETCH ${spann} (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])`);
+    const svar = await cmd(conn, tagg(), `${anvandUid ? "UID " : ""}FETCH ${spann} (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])`);
 
     const rader = parseFetch(svar).map((p) => {
       const uid = Number(p.meta.match(/UID (\d+)/i)?.[1] ?? 0);
@@ -273,11 +309,8 @@ async function synkaMapp(
     }
     logg.nya = rader.length;
     logg.msTotalt = Date.now() - t0;
-    await cmd(conn, "a9", "LOGOUT");
   } catch (e) {
     logg.fel = String(e).slice(0, 250);
-  } finally {
-    try { conn?.close(); } catch { /* redan stängd */ }
   }
   return logg;
 }
@@ -312,7 +345,7 @@ Deno.serve(async (req: Request) => {
     const konto = (f as Record<string, unknown>).hub_mail_accounts as Record<string, unknown>;
     try {
       const rad = await inloggningsrad(konto);
-      resultat.push(await synkaMapp(admin, konto, rad, f.path as string, f.id as string));
+      resultat.push(...await synkaMappar(admin, konto, rad, [{ path: f.path as string, id: f.id as string }]));
     } catch (e) {
       resultat.push({ konto: konto.label, fel: String(e).slice(0, 200) });
     }
@@ -328,8 +361,16 @@ Deno.serve(async (req: Request) => {
       if (k.provider !== "outlook" && !k.secret_id) continue;
       try {
         const rad = await inloggningsrad(k as Record<string, unknown>);
-        const { data: inbox } = await admin.from("hub_folders").select("id").eq("account_id", k.id).eq("path", "INBOX").maybeSingle();
-        resultat.push(await synkaMapp(admin, k as Record<string, unknown>, rad, "INBOX", inbox?.id ?? null));
+        const { data: mappar } = await admin.from("hub_folders")
+          .select("id, path, role").eq("account_id", k.id).in("role", ["inbox", "sent"]);
+        const inbox = (mappar ?? []).find((m) => m.path === "INBOX");
+        // Skickat bara om den kartlagts av mail-folders - sokvagen ser olika
+        // ut hos varje leverantor (INBOX.Sent, [Gmail]/Skickat, Sent) och gar
+        // inte att gissa fram.
+        const skickat = (mappar ?? []).find((m) => m.role === "sent");
+        const lista: Mappval[] = [{ path: "INBOX", id: (inbox?.id as string) ?? null }];
+        if (skickat) lista.push({ path: skickat.path as string, id: skickat.id as string });
+        resultat.push(...await synkaMappar(admin, k as Record<string, unknown>, rad, lista));
       } catch (e) {
         resultat.push({ konto: k.label, fel: String(e).slice(0, 200) });
       }
