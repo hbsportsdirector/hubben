@@ -389,7 +389,7 @@ export function Bifoga({ bilagor, setBilagor }: {
           onClick={() => setDriveOppen(false)}
         >
           <div
-            className="w-full max-w-2xl rounded-2xl border border-border bg-card p-4 shadow-2xl"
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-card p-4 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center gap-2">

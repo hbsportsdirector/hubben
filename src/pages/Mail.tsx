@@ -1711,15 +1711,19 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
   const valtKonto = konton.find((k) => k.id === fran)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[8vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[max(1rem,5vh)]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative z-10 w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+      {/* dvh, inte vh: pa telefonen andras fonsterhojden nar adressfaltet
+          glider undan, och vh raknar pa den storsta hojden. Rutan far aldrig
+          bli hogre an det som faktiskt syns - da hamnar Skicka utanfor
+          kanten utan att ga att na. */}
+      <div className="relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <h3 className="font-semibold">Nytt mejl</h3>
           <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">✕</button>
         </div>
 
-        <div className="space-y-2 p-5">
+        <div className="flex-1 space-y-2 overflow-y-auto p-5">
           <div className="flex items-center gap-2 text-xs">
             <span className="w-12 shrink-0 text-muted">Från</span>
             <select
@@ -1769,31 +1773,35 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
             <p className="rounded-lg border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">✓ Skickat</p>
           )}
 
-          <div className="flex items-center justify-between pt-1">
-            <button onClick={onClose} className="text-xs text-muted hover:text-ink">Avbryt</button>
-            <button
-              disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
-              onClick={async () => {
-                setSkickar(true); setResultat(null)
-                try {
-                  const r = await onSkicka({
-                    fromAccountId: fran, to: till.trim(), subject: amne, body: text,
-                    attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
-                  })
-                  if (r?.fel) setResultat({ fel: r.fel })
-                  else { setResultat({ ok: true }); setTimeout(onClose, 1400) }
-                } catch (e) {
-                  setResultat({ fel: e instanceof Error ? e.message : String(e) })
-                } finally {
-                  // Alltid — annars står knappen kvar och säger Skickar för evigt
-                  setSkickar(false)
-                }
-              }}
-              className="rounded-xl bg-accent px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
-            >
-              {skickar ? 'Skickar…' : 'Skicka'}
-            </button>
-          </div>
+
+        </div>
+
+        {/* Utanfor rullningen. Avbryt och Skicka ska sitta still och alltid
+            synas, hur langt brevet an ar. */}
+        <div className="flex shrink-0 items-center justify-between border-t border-border px-5 py-3">
+          <button onClick={onClose} className="text-xs text-muted hover:text-ink">Avbryt</button>
+          <button
+            disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
+            onClick={async () => {
+              setSkickar(true); setResultat(null)
+              try {
+                const r = await onSkicka({
+                  fromAccountId: fran, to: till.trim(), subject: amne, body: text,
+                  attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
+                })
+                if (r?.fel) setResultat({ fel: r.fel })
+                else { setResultat({ ok: true }); setTimeout(onClose, 1400) }
+              } catch (e) {
+                setResultat({ fel: e instanceof Error ? e.message : String(e) })
+              } finally {
+                // Alltid — annars står knappen kvar och säger Skickar för evigt
+                setSkickar(false)
+              }
+            }}
+            className="rounded-xl bg-accent px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-soft disabled:opacity-50"
+          >
+            {skickar ? 'Skickar…' : 'Skicka'}
+          </button>
         </div>
       </div>
     </div>
