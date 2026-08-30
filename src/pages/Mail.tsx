@@ -95,6 +95,8 @@ interface Konto {
   id: string; label: string; color: string; email: string; signature: string
   /** Satt om kopian till Skickat misslyckades efter senaste sandningen */
   sent_kopia_fel: string | null
+  /** Satt om senaste sandningen inte gick igenom alls */
+  sandning_fel: string | null
 }
 interface Mapp {
   id: string
@@ -323,6 +325,7 @@ export default function Mail() {
   const [visaSorterade, setVisaSorterade] = useState(false)
   const [angraKvar, setAngraKvar] = useState<number | null>(null)
   const angraRef = useRef<(() => void) | null>(null)
+  const skickaNuRef = useRef<(() => void) | null>(null)
   const [enkelFlytt, setEnkelFlytt] = useState<Mejl | null>(null)
   const [synkar, setSynkar] = useState(false)
   const [senastSynk, setSenastSynk] = useState<string | null>(null)
@@ -344,24 +347,43 @@ export default function Mail() {
         kvar -= 1
         setAngraKvar(kvar > 0 ? kvar : null)
       }, 1000)
-      const timer = setTimeout(async () => {
+      const stad = () => {
         clearInterval(rakna)
         setAngraKvar(null)
         angraRef.current = null
+        skickaNuRef.current = null
+      }
+      const timer = setTimeout(async () => {
+        stad()
         klar((await gor()) ?? {})
       }, ANGRA_SEKUNDER * 1000)
       angraRef.current = () => {
         clearTimeout(timer)
-        clearInterval(rakna)
-        setAngraKvar(null)
-        angraRef.current = null
+        stad()
         klar({ fel: 'Sändningen avbröts — mejlet ligger kvar här.' })
+      }
+      skickaNuRef.current = () => {
+        clearTimeout(timer)
+        stad()
+        gor().then((r) => klar(r ?? {}))
       }
     })
   }
 
-  // Timers får inte leva vidare om vyn lämnas mitt i en nedräkning
-  useEffect(() => () => { angraRef.current?.() }, [])
+  // Lämnar man vyn mitt i nedräkningen ska mejlet gå iväg, inte tyst
+  // strykas: det enda man sagt till appen är Skicka. Går det fel har svaret
+  // ingen ruta att komma tillbaka till, och då står felet kvar på kontoraden
+  // i stället — se hub_mail_accounts.sandning_fel.
+  useEffect(() => () => { skickaNuRef.current?.() }, [])
+
+  // Stänger man fliken mitt i nedräkningen hinner ingenting skickas — där
+  // hjälper ingen kod, bara en fråga innan sidan hinner stängas.
+  useEffect(() => {
+    if (angraKvar === null) return
+    const varna = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', varna)
+    return () => window.removeEventListener('beforeunload', varna)
+  }, [angraKvar])
 
   async function anropaFunktion(namn: string, kropp: Record<string, unknown>) {
     const { data: { session } } = await supabase.auth.getSession()
@@ -420,7 +442,7 @@ export default function Mail() {
 
   const laddaMeta = useCallback(async () => {
     const [k, m] = await Promise.all([
-      supabase.from('hub_mail_accounts').select('id, label, color, email, signature, sent_kopia_fel').eq('active', true).order('sort_order'),
+      supabase.from('hub_mail_accounts').select('id, label, color, email, signature, sent_kopia_fel, sandning_fel').eq('active', true).order('sort_order'),
       supabase.from('hub_folders').select('id, path, name, role, account_id, total_count, unseen_count, last_synced_at, hidden').order('path'),
     ])
     setKonton(k.data ?? [])
@@ -1065,9 +1087,16 @@ export default function Mail() {
         <p className="rounded-xl border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">✓ {regelKvitto}</p>
       )}
 
+      {/* Två olika sätt att sätta höjd på telefonen, och skillnaden är hela
+          poängen. Listan ska hållas kvar innanför skärmen och scrolla inuti,
+          alltså fast höjd. Ett öppnat mejl ska i stället få ta den plats det
+          behöver och låta sidan scrolla — mätningen har ett golv på 320 px,
+          och med chipsen och sökrutan ovanför slår golvet till nästan alltid.
+          Läsrutans fasta delar äter då upp alltihop och brödtexten, som är
+          det enda som får ge vika, krymper till ingenting. */}
       <div
         ref={panelRef}
-        style={panelHojd ? { height: panelHojd } : undefined}
+        style={panelHojd ? (vald ? { minHeight: panelHojd } : { height: panelHojd }) : undefined}
         className="flex gap-3 lg:h-[calc(100dvh-13rem)] xl:h-[calc(100dvh-11.5rem)]"
       >
         {/* Lådor, konton och mappar */}
@@ -1421,7 +1450,7 @@ export default function Mail() {
         <Delare onDra={(dx) => setListBredd((b) => klam(b + dx, 260, 760))} />
 
         {/* Läsruta */}
-        <div className={`min-w-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card lg:block ${
+        <div className={`min-w-0 flex-1 rounded-2xl border border-border bg-card lg:block lg:overflow-hidden ${
           vald ? 'block' : 'hidden'
         }`}>
           {vald ? (
@@ -1448,7 +1477,7 @@ export default function Mail() {
                 const { vidarebefordran, ...rest } = kropp as Record<string, unknown>
                 const svar = await anropaFunktion('mail-send',
                   vidarebefordran ? rest : { ...rest, inReplyToId: vald.id })
-                if (svar?.fel) return { fel: svar.fel as string }
+                if (svar?.fel) { laddaMeta(); return { fel: svar.fel as string } }
                 uppdatera(vald.id, { reply_later: false } as Partial<Mejl>)
                 setTimeout(() => laddaMeta(), 8000) // kopian till Skickat gors i bakgrunden
                 return {}
@@ -1525,33 +1554,61 @@ export default function Mail() {
         onSkicka={(kropp) => medAngra(async () => {
           const svar = await anropaFunktion('mail-send', kropp)
           // Kopian till Skickat görs efter svaret — kolla utfallet strax efteråt
-          if (!svar?.fel) setTimeout(() => laddaMeta(), 8000)
+          if (svar?.fel) laddaMeta(); else setTimeout(() => laddaMeta(), 8000)
           return svar
         })}
       />}
 
-      {/* Kopian till Skickat gjordes i bakgrunden och gick fel. Ingen väntade
-          på den, så den får säga till här i stället. */}
-      {konton.filter((k) => k.sent_kopia_fel).map((k) => (
-        <div key={k.id} className="fixed bottom-4 left-4 z-50 max-w-sm rounded-xl border border-warn/40 bg-card px-4 py-3 shadow-2xl">
-          <p className="text-sm font-medium text-warn">Mejlet skickades, men inte kopian</p>
-          <p className="mt-1 text-xs text-muted">
-            {k.label}: {k.sent_kopia_fel}
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            Mottagaren har fått mejlet — det saknas bara i din Skickat-mapp.
-          </p>
-          <button
-            onClick={async () => {
-              await supabase.from('hub_mail_accounts').update({ sent_kopia_fel: null }).eq('id', k.id).throwOnError()
-              laddaMeta()
-            }}
-            className="mt-2 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"
-          >
-            Uppfattat
-          </button>
-        </div>
-      ))}
+      {/* Två sorters efterhandsbesked om senaste sändningen, båda hämtade
+          från kontoraden. De står kvar tills de kvitteras — den som stängde
+          skrivrutan eller bytte sida ska ändå få veta hur det gick. */}
+      <div className="fixed bottom-4 left-4 z-50 flex max-w-sm flex-col gap-2">
+        {/* Mejlet gick aldrig iväg. Det tyngre av de två beskeden, så det
+            står överst. */}
+        {konton.filter((k) => k.sandning_fel).map((k) => (
+          <div key={k.id} className="rounded-xl border border-bad/40 bg-card px-4 py-3 shadow-2xl">
+            <p className="text-sm font-medium text-bad">Mejlet skickades inte</p>
+            <p className="mt-1 text-xs text-muted">
+              {k.label}: {k.sandning_fel}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Mejlet finns inte sparat någonstans — skriv det på nytt när felet är avhjälpt.
+            </p>
+            <button
+              onClick={async () => {
+                await supabase.from('hub_mail_accounts').update({ sandning_fel: null }).eq('id', k.id).throwOnError()
+                laddaMeta()
+              }}
+              className="mt-2 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"
+            >
+              Uppfattat
+            </button>
+          </div>
+        ))}
+
+        {/* Kopian till Skickat gjordes i bakgrunden och gick fel. Ingen väntade
+            på den, så den får säga till här i stället. */}
+        {konton.filter((k) => k.sent_kopia_fel).map((k) => (
+          <div key={k.id} className="rounded-xl border border-warn/40 bg-card px-4 py-3 shadow-2xl">
+            <p className="text-sm font-medium text-warn">Mejlet skickades, men inte kopian</p>
+            <p className="mt-1 text-xs text-muted">
+              {k.label}: {k.sent_kopia_fel}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Mottagaren har fått mejlet — det saknas bara i din Skickat-mapp.
+            </p>
+            <button
+              onClick={async () => {
+                await supabase.from('hub_mail_accounts').update({ sent_kopia_fel: null }).eq('id', k.id).throwOnError()
+                laddaMeta()
+              }}
+              className="mt-2 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-ink"
+            >
+              Uppfattat
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1594,9 +1651,14 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
     .sort((a, b) => Number(b.konto.id === franKonto) - Number(a.konto.id === franKonto))
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[6vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    // Samma tak som den delade rutan i ui.tsx, av samma två skäl: dvh mäter
+    // det som syns på iOS, och marginalen nertill håller undan bottennavet.
+    <div
+      className="fixed inset-0 z-50 flex h-[100dvh] items-start justify-center p-4 pb-[calc(5.9rem+env(safe-area-inset-bottom))] pt-[max(1rem,5vh)] md:pb-4"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-      <div className="relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div className="relative z-10 flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h3 className="font-semibold">Flytta {antal} {antal === 1 ? 'mejl' : 'mejl'} till…</h3>
           <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">✕</button>
@@ -1710,8 +1772,13 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
 
   const valtKonto = konton.find((k) => k.id === fran)
 
+  // Under sändningen — inklusive ångra-nedräkningen — går rutan inte att
+  // stänga. Stängde man den förr försvann både felmeddelandet och texten man
+  // skrivit, och kvar blev intrycket att mejlet gått iväg.
+  const stang = () => { if (!skickar) onClose() }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[max(1rem,5vh)]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[max(1rem,5vh)]" onMouseDown={(e) => e.target === e.currentTarget && stang()}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       {/* dvh, inte vh: pa telefonen andras fonsterhojden nar adressfaltet
           glider undan, och vh raknar pa den storsta hojden. Rutan far aldrig
@@ -1720,10 +1787,10 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
       <div className="relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <h3 className="font-semibold">Nytt mejl</h3>
-          <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">✕</button>
+          <button onClick={stang} disabled={skickar} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink disabled:opacity-40" aria-label="Stäng">✕</button>
         </div>
 
-        <div className="flex-1 space-y-2 overflow-y-auto p-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-5">
           <div className="flex items-center gap-2 text-xs">
             <span className="w-12 shrink-0 text-muted">Från</span>
             <select
@@ -1752,20 +1819,24 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
             />
           </div>
 
+          {/* Växer med rutan när det finns plats, krymper till fyra rader
+              när det inte gör det. */}
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Skriv ditt meddelande…"
-            className="min-h-56 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+            className="min-h-28 w-full flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
           />
 
           <Bifoga bilagor={bilagor} setBilagor={setBilagor} />
 
+          {/* Hopfälld. Att den läggs till är det man behöver veta; hur den
+              ser ut vet man redan, och utfälld åt den en femtedel av rutan. */}
           {valtKonto?.signature?.trim() && (
-            <div className="rounded-lg border border-dashed border-border px-3 py-2">
-              <p className="mb-1 text-[10px] uppercase tracking-wider text-muted">Signatur läggs till</p>
-              <pre className="whitespace-pre-wrap font-sans text-[11px] text-muted">{valtKonto.signature.trim()}</pre>
-            </div>
+            <details className="shrink-0 rounded-lg border border-dashed border-border px-3 py-1.5">
+              <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-muted">Signatur läggs till</summary>
+              <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap font-sans text-[11px] text-muted">{valtKonto.signature.trim()}</pre>
+            </details>
           )}
 
           {resultat?.fel && <p className="rounded-lg border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">{resultat.fel}</p>}
@@ -1773,13 +1844,12 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
             <p className="rounded-lg border border-good/40 bg-good/10 px-3 py-2 text-xs text-good">✓ Skickat</p>
           )}
 
-
         </div>
 
         {/* Utanfor rullningen. Avbryt och Skicka ska sitta still och alltid
             synas, hur langt brevet an ar. */}
         <div className="flex shrink-0 items-center justify-between border-t border-border px-5 py-3">
-          <button onClick={onClose} className="text-xs text-muted hover:text-ink">Avbryt</button>
+          <button onClick={stang} disabled={skickar} className="text-xs text-muted hover:text-ink disabled:opacity-40">Avbryt</button>
           <button
             disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
             onClick={async () => {
@@ -1926,7 +1996,9 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
   const allaMottagare = (mejl.to_emails ?? []).filter(Boolean).join(', ')
 
   return (
-    <div className="flex h-full flex-col">
+    // h-full bara från lg. På telefonen finns ingen höjd att fylla — där
+    // växer rutan med mejlet och sidan scrollar.
+    <div className="flex flex-col lg:h-full">
       <div className="relative flex flex-wrap items-center gap-0.5 border-b border-border px-2 py-1">
         {/* På telefonen har läsrutan tagit listans plats — den här tar en tillbaka */}
         {onTillbaka && (
@@ -2081,8 +2153,8 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
       {/* Bilagelisten ligger utanför det som scrollar — den ska alltid synas */}
       <Bilagor msgId={mejl.id} aktiv={!hamtar} />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+      <div className="flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-hidden">
+        <div className="flex flex-col px-4 py-3 lg:min-h-0 lg:flex-1">
           {hamtar && <Spinner />}
           {fel && <p className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">Kunde inte hämta brödtexten: {fel}</p>}
           {kropp && (
@@ -2123,11 +2195,11 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
                   referrerPolicy="no-referrer"
                   srcDoc={`<base target="_blank" rel="noopener noreferrer"><style>html,body{background:#eeece7;color:#1f2937;margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.6;padding:16px;word-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}a{color:#1d4ed8}</style>${kropp.html_body}`}
                   style={dampad ? { filter: 'brightness(0.68) sepia(0.12) contrast(0.96)' } : undefined}
-                  className="min-h-0 w-full flex-1 rounded-xl border border-border bg-white"
+                  className="h-[70vh] w-full rounded-xl border border-border bg-white lg:h-auto lg:min-h-0 lg:flex-1"
                   title="Mejlinnehåll"
                 />
               ) : (
-                <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
                   <pre className="max-w-prose whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-ink/90">
                     {stada(kropp.text_body) || '(ingen textversion)'}
                   </pre>
@@ -2151,7 +2223,10 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
             <span className="text-sm text-muted">Svara {(mejl.from_name || mejl.from_email || '').split(' ')[0]}…</span>
           </button>
         ) : (
-          <div className="space-y-2 rounded-xl border border-border bg-surface p-3">
+          // Samma tak som Nytt mejl: rutan tar aldrig mer än sin del av
+          // läsrutan, och knappraden står stilla längst ner.
+          <div className="flex flex-col rounded-xl border border-border bg-surface lg:max-h-[60vh] lg:min-h-0">
+            <div className="flex flex-col gap-2 p-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="text-muted">Från</span>
               <select
@@ -2190,18 +2265,18 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
               autoFocus
               // Citatet ligger redan i rutan — markören hör hemma överst
               onFocus={(e) => e.currentTarget.setSelectionRange(0, 0)}
-              className="min-h-40 w-full rounded-lg border border-border bg-card px-2.5 py-2 text-sm text-ink outline-none focus:border-accent"
+              className="min-h-28 w-full flex-1 rounded-lg border border-border bg-card px-2.5 py-2 text-sm text-ink outline-none focus:border-accent"
             />
 
             <Bifoga bilagor={bilagor} setBilagor={setBilagor} />
 
             {konton.find((k) => k.id === franKonto)?.signature?.trim() && (
-              <div className="rounded-lg border border-dashed border-border px-2.5 py-1.5">
-                <p className="mb-1 text-[10px] uppercase tracking-wider text-muted">Signatur läggs till</p>
-                <pre className="whitespace-pre-wrap font-sans text-[11px] text-muted">
+              <details className="shrink-0 rounded-lg border border-dashed border-border px-2.5 py-1.5">
+                <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-muted">Signatur läggs till</summary>
+                <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap font-sans text-[11px] text-muted">
                   {konton.find((k) => k.id === franKonto)?.signature.trim()}
                 </pre>
-              </div>
+              </details>
             )}
 
             {resultat?.fel && (
@@ -2211,8 +2286,16 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
               <p className="rounded-lg border border-good/40 bg-good/10 px-2.5 py-1.5 text-xs text-good">✓ Skickat</p>
             )}
 
-            <div className="flex items-center justify-between">
-              <button onClick={() => setLage(null)} className="text-xs text-muted hover:text-ink">Avbryt</button>
+            </div>
+
+            <div className="flex shrink-0 items-center justify-between border-t border-border px-3 py-2">
+              <button
+                onClick={() => { if (!skickar) setLage(null) }}
+                disabled={skickar}
+                className="text-xs text-muted hover:text-ink disabled:opacity-40"
+              >
+                Avbryt
+              </button>
               <button
                 disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
                 onClick={async () => {

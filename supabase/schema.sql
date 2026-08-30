@@ -267,6 +267,8 @@ create table hub_mail_accounts (
   signature        text             not null default '',
     -- Signatur som läggs till automatiskt vid sändning från detta konto.
   sent_kopia_fel   text             null,
+  sandning_fel     text             null,
+    -- Senaste sändningen som gick fel. Se 20260824_hub_sandning_fel.sql.
   gallring_mapp_id uuid             null
 );
 -- secret_id pekar in i vault.secrets. Själva lösenordet nås bara via

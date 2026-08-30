@@ -21,7 +21,7 @@ Vault, OAuth-klienthemligheter i `hub_oauth_klienter` via
 
 | Funktion | Gör |
 | --- | --- |
-| `mail-sync` | Hämtar rubriker via IMAP. Kan köras av schemaläggaren. |
+| `mail-sync` | Hämtar rubriker via IMAP: Inkorgen och Skickat, på samma inloggning. Kan köras av schemaläggaren. |
 | `mail-body` | Brödtext + bilagekarta för ett mejl. |
 | `mail-prefetch` | Samma sak för många mejl i en uppkoppling. |
 | `mail-folders` | Speglar mappstrukturen och räknar. |
