@@ -1773,12 +1773,13 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
   const stang = () => { if (!skickar) onClose() }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-3 pt-[4vh] sm:p-4 sm:pt-[8vh]" onMouseDown={(e) => e.target === e.currentTarget && stang()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[max(1rem,5vh)]" onMouseDown={(e) => e.target === e.currentTarget && stang()}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      {/* Rutan får aldrig bli högre än skärmen. Blir den det scrollar
-          fälten inuti — knappraden står kvar längst ner. Förr växte rutan
-          förbi skärmkanten och Skicka hamnade utanför bild. */}
-      <div className="relative z-10 flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      {/* dvh, inte vh: pa telefonen andras fonsterhojden nar adressfaltet
+          glider undan, och vh raknar pa den storsta hojden. Rutan far aldrig
+          bli hogre an det som faktiskt syns - da hamnar Skicka utanfor
+          kanten utan att ga att na. */}
+      <div className="relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <h3 className="font-semibold">Nytt mejl</h3>
           <button onClick={stang} disabled={skickar} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink disabled:opacity-40" aria-label="Stäng">✕</button>
@@ -1840,8 +1841,8 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
 
         </div>
 
-        {/* Utanför det som scrollar — Skicka ska stå på samma ställe hur
-            långt mejlet än blir. */}
+        {/* Utanfor rullningen. Avbryt och Skicka ska sitta still och alltid
+            synas, hur langt brevet an ar. */}
         <div className="flex shrink-0 items-center justify-between border-t border-border px-5 py-3">
           <button onClick={stang} disabled={skickar} className="text-xs text-muted hover:text-ink disabled:opacity-40">Avbryt</button>
           <button
