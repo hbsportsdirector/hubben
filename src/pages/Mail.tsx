@@ -1651,9 +1651,14 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
     .sort((a, b) => Number(b.konto.id === franKonto) - Number(a.konto.id === franKonto))
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[6vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    // Samma tak som den delade rutan i ui.tsx, av samma två skäl: dvh mäter
+    // det som syns på iOS, och marginalen nertill håller undan bottennavet.
+    <div
+      className="fixed inset-0 z-50 flex h-[100dvh] items-start justify-center p-4 pb-[calc(5.9rem+env(safe-area-inset-bottom))] pt-[max(1rem,5vh)] md:pb-4"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-      <div className="relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div className="relative z-10 flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h3 className="font-semibold">Flytta {antal} {antal === 1 ? 'mejl' : 'mejl'} till…</h3>
           <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">✕</button>

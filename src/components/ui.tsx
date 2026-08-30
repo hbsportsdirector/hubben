@@ -53,16 +53,33 @@ export function Label({ children }: { children: ReactNode }) {
 export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    // Två saker gjorde att knappraden längst ner i rutan — Spara — inte gick
+    // att nå på telefonen.
+    //
+    // 90vh: på iOS räknar vh på fönstret med adressfältet bortdolt, alltså
+    // högre än det som faktiskt syns. Rutan fick ta 90 % av något större än
+    // skärmen, och nederkanten hamnade utanför. dvh mäter det som syns just
+    // nu och krymper när adressfältet glider fram.
+    //
+    // Bottennavet ligger på samma z-nivå och ritas efter, alltså ovanpå.
+    // Marginalen nertill håller undan det. Utan den låg Spara bakom navet
+    // även när rutan i övrigt fick plats.
+    <div
+      className="fixed inset-0 z-50 flex h-[100dvh] items-center justify-center p-4 pb-[calc(5.9rem+env(safe-area-inset-bottom))] md:pb-4"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
-        <div className="mb-4 flex items-center justify-between">
+      <div className="relative z-10 flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between px-6 pb-4 pt-6">
           <h3 className="text-lg font-semibold">{title}</h3>
           <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
         </div>
-        {children}
+        {/* Bara innehållet rullar, rubriken står kvar. Knappraden ligger sist
+            i innehållet hos alla nio som använder rutan, så den nås genom att
+            rulla — det som saknades var att rutan alls fick plats. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">{children}</div>
       </div>
     </div>
   )
