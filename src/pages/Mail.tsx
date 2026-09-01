@@ -7,6 +7,7 @@ import { getUserId } from '../lib/data'
 import { Spinner, EmptyState } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
 import { AdressFalt } from '../components/AdressFalt'
+import { hamtaUtkast, sparaUtkast, slangUtkast, sparatText } from '../lib/utkast'
 import { MejlTillHubben, DagensSchema } from '../components/MejlTillHubben'
 
 /** Bygger en tsquery av det man skrivit i sökrutan.
@@ -1784,6 +1785,41 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
   const [skickar, setSkickar] = useState(false)
   const [resultat, setResultat] = useState<{ ok?: boolean; fel?: string } | null>(null)
   const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
+  const [laddarUtkast, setLaddarUtkast] = useState(true)
+  const [sparat, setSparat] = useState<string | null>(null)
+  const [aterstallt, setAterstallt] = useState(false)
+
+  // Ett pabörjat mejl ligger kvar tills det skickas eller slängs. Utan det
+  // raderade ett stängt fönster allt man skrivit.
+  useEffect(() => {
+    let avbruten = false
+    ;(async () => {
+      const u = await hamtaUtkast(null)
+      if (avbruten) { setLaddarUtkast(false); return }
+      if (u) {
+        if (u.konto_id) setFran(u.konto_id)
+        setTill(u.till ?? ''); setKopia(u.kopia ?? ''); setHemligKopia(u.hemlig ?? '')
+        setAmne(u.amne ?? ''); setText(u.text ?? '')
+        // Fälten måste fram igen, annars ser mottagarna ut att ha försvunnit
+        if ((u.kopia ?? '') || (u.hemlig ?? '')) setVisaKopia(true)
+        setAterstallt(true)
+      }
+      setLaddarUtkast(false)
+    })()
+    return () => { avbruten = true }
+  }, [])
+
+  // Sparas en stund efter att man slutat skriva, inte vid varje tangent.
+  useEffect(() => {
+    if (laddarUtkast) return
+    const t = setTimeout(async () => {
+      setSparat(await sparaUtkast(null, {
+        lage: 'nytt', konto_id: fran || null,
+        till, kopia, hemlig: hemligKopia, amne, text,
+      }))
+    }, 700)
+    return () => clearTimeout(t)
+  }, [till, kopia, hemligKopia, amne, text, fran, laddarUtkast])
 
   const valtKonto = konton.find((k) => k.id === fran)
 
@@ -1895,8 +1931,29 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
 
         {/* Utanfor rullningen. Avbryt och Skicka ska sitta still och alltid
             synas, hur langt brevet an ar. */}
-        <div className="flex shrink-0 items-center justify-between border-t border-border px-5 py-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-5 py-3">
           <button onClick={stang} disabled={skickar} className="text-xs text-muted hover:text-ink disabled:opacity-40">Avbryt</button>
+          {/* Ett sparat utkast måste synas. Annars vet man inte om det går
+              att stänga rutan utan att förlora det man skrivit. */}
+          {sparat && (
+            <>
+              <span className="text-[11px] text-muted">{sparatText(sparat)}</span>
+              <button
+                onClick={async () => {
+                  await slangUtkast(null)
+                  setSparat(null); setAterstallt(false)
+                  setTill(''); setKopia(''); setHemligKopia(''); setAmne(''); setText('')
+                }}
+                className="text-[11px] text-muted underline decoration-dotted underline-offset-2 hover:text-bad"
+              >
+                Släng utkastet
+              </button>
+            </>
+          )}
+          {aterstallt && !sparat && (
+            <span className="text-[11px] text-muted">Utkast återställt</span>
+          )}
+          <span className="flex-1" />
           <button
             disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
             onClick={async () => {
@@ -1909,7 +1966,13 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
                   attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
                 })
                 if (r?.fel) setResultat({ fel: r.fel })
-                else { setResultat({ ok: true }); setTimeout(onClose, 1400) }
+                else {
+                  setResultat({ ok: true })
+                  // Mejlet ar ivag - utkastet ska inte ligga kvar och se
+                  // ut som nagot opaborjat nasta gang rutan oppnas.
+                  await slangUtkast(null)
+                  setTimeout(onClose, 1400)
+                }
               } catch (e) {
                 setResultat({ fel: e instanceof Error ? e.message : String(e) })
               } finally {
@@ -1957,6 +2020,7 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
   // skiljer är mottagare, ämnesrad och hur originalet återges.
   const [lage, setLage] = useState<'svar' | 'svaraAlla' | 'vidare' | null>(null)
   const [kopia, setKopia] = useState('')
+  const [sparat, setSparat] = useState<string | null>(null)
   const [visaKopia, setVisaKopia] = useState(false)
   const visaSvar = lage !== null
   const [franKonto, setFranKonto] = useState(mejl.account_id)
@@ -1968,7 +2032,7 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
   const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
 
   useEffect(() => {
-    setLage(null); setResultat(null); setBilagor([]); setKopia('')
+    setLage(null); setResultat(null); setBilagor([]); setKopia(''); setSparat(null)
     setFranKonto(mejl.account_id)
     setTill(mejl.from_email ?? '')
     setAmne(/^re:/i.test(mejl.subject) ? mejl.subject : `Re: ${mejl.subject}`)
@@ -1994,6 +2058,15 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
     }
     setText('')
     setLage(nyttLage)
+    // Ett pabörjat svar hor till sitt mejl. Finns det ett sedan forra
+    // gangen ska det tillbaka, inte skrivas over av tomma falt.
+    hamtaUtkast(mejl.id).then((u) => {
+      if (!u) return
+      setLage((u.lage === 'nytt' ? 'svar' : u.lage) as 'svar' | 'svaraAlla' | 'vidare')
+      if (u.konto_id) setFranKonto(u.konto_id)
+      setTill(u.till ?? ''); setKopia(u.kopia ?? '')
+      setAmne(u.amne ?? ''); setText(u.text ?? '')
+    })
   }
   const [kropp, setKropp] = useState<{ text_body: string | null; html_body: string | null } | null>(null)
   const [hamtar, setHamtar] = useState(false)
@@ -2046,6 +2119,19 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
     setTimeout(() => svarsRuta.current?.setSelectionRange(0, 0), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lage, kropp])
+
+  // Sparas en stund efter att man slutat skriva. Bara nar rutan ar oppen -
+  // annars skulle ett stangt svar sparas om vid varje omritning.
+  useEffect(() => {
+    if (!lage) return
+    const t = setTimeout(async () => {
+      setSparat(await sparaUtkast(mejl.id, {
+        lage, konto_id: franKonto || null,
+        till, kopia, hemlig: '', amne, text,
+      }))
+    }, 700)
+    return () => clearTimeout(t)
+  }, [lage, mejl.id, franKonto, till, kopia, amne, text])
 
   const part = motpart(mejl)
   const namn = part.namn
@@ -2393,7 +2479,7 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
 
             </div>
 
-            <div className="flex shrink-0 items-center justify-between border-t border-border px-3 py-2">
+            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-3 py-2">
               <button
                 onClick={() => { if (!skickar) setLage(null) }}
                 disabled={skickar}
@@ -2401,6 +2487,21 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
               >
                 Avbryt
               </button>
+              {sparat && (
+                <>
+                  <span className="text-[11px] text-muted">{sparatText(sparat)}</span>
+                  <button
+                    onClick={async () => {
+                      await slangUtkast(mejl.id)
+                      setSparat(null); setText(''); setLage(null)
+                    }}
+                    className="text-[11px] text-muted underline decoration-dotted underline-offset-2 hover:text-bad"
+                  >
+                    Släng utkastet
+                  </button>
+                </>
+              )}
+              <span className="flex-1" />
               <button
                 disabled={skickar || !till.trim() || !text.trim() || bilagor.reduce((a, b) => a + b.storlek, 0) > MAX_UTGAENDE}
                 onClick={async () => {
@@ -2415,7 +2516,11 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
                       vidarebefordran: lage === 'vidare',
                     })
                     setResultat(r)
-                    if (r.ok) { setText(''); setTimeout(() => setLage(null), 1200) }
+                    if (r.ok) {
+                      await slangUtkast(mejl.id)
+                      setSparat(null); setText('')
+                      setTimeout(() => setLage(null), 1200)
+                    }
                   } catch (e) {
                     setResultat({ fel: e instanceof Error ? e.message : String(e) })
                   } finally {
