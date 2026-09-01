@@ -83,6 +83,9 @@ interface Mejl {
    *  In-Reply-To, med Message-ID som reserv för ett ensamt mejl. */
   thread_key: string | null
   to_emails: string[] | null
+  cc_emails: string[] | null
+  /** Har jag redan svarat? Sätts av mail-sync ur IMAP-flaggan Answered. */
+  answered: boolean
   /** Mappen mejlet visas i — köad flytt medräknad */
   visad_mapp_id: string
   /** Mappens roll: inbox, sent, trash …  */
@@ -280,6 +283,12 @@ function SvepRad({ children, onVanster, onHoger }: {
       </div>
     </div>
   )
+}
+
+/** Delar en fritextrad med adresser i en lista. Komma eller semikolon —
+ *  folk klistrar in båda, och Outlook skriver semikolon. */
+function adresslista(rad: string): string[] {
+  return rad.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
 }
 
 function visaTid(iso: string | null) {
@@ -572,7 +581,7 @@ export default function Mail() {
     // hub_mejl vet vilken mapp ett mejl visas i — även när flytten ligger kvar
     // i kön. Klienten sätter inte ihop det filtret själv längre.
     let q = supabase.from('hub_mejl')
-      .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, thread_key, vantar, to_emails')
+      .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, thread_key, vantar, to_emails, cc_emails, answered')
       .order('sent_at', { ascending: false })
       .limit(200)
 
@@ -673,7 +682,7 @@ export default function Mail() {
     window.history.replaceState({}, '', window.location.pathname)
     ;(async () => {
       const { data } = await supabase.from('hub_mejl')
-        .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, thread_key, vantar, to_emails')
+        .select('id, account_id, folder_id, visad_mapp_id, visad_roll, subject, from_name, from_email, sent_at, seen, flagged, reply_later, has_attachments, rfc_message_id, thread_key, vantar, to_emails, cc_emails, answered')
         .eq('id', id).maybeSingle()
       if (!data) return
       setMejl((prev) => (prev.some((m) => m.id === id) ? prev : [data as Mejl, ...prev]))
@@ -840,6 +849,7 @@ export default function Mail() {
       antal: grupp.length,
       olasta: grupp.filter((m) => !m.seen).length,
       harBilagor: grupp.some((m) => m.has_attachments),
+      besvarad: grupp.some((m) => m.answered),
       flaggad: grupp.some((m) => m.flagged),
       svaraSenare: grupp.some((m) => m.reply_later),
       vantar: grupp.some((m) => m.vantar),
@@ -1410,6 +1420,7 @@ export default function Mail() {
                         <span className="shrink-0 text-[11px] text-muted">{visaTid(m.sent_at)}</span>
                       </span>
                       <span className={`mt-0.5 flex items-center gap-1.5 truncate text-[13px] ${trad.olasta > 0 ? 'font-medium text-ink' : 'text-muted'}`}>
+                        {trad.besvarad && <span className="shrink-0 text-[11px] text-muted" title="Besvarat">↩</span>}
                         {trad.flaggad && <span className="shrink-0 text-[11px]">⭐</span>}
                         {trad.svaraSenare && <span className="shrink-0 text-[11px]">↩️</span>}
                         <span className="truncate">{m.subject || '(inget ämne)'}</span>
@@ -1764,6 +1775,9 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
 }) {
   const [fran, setFran] = useState(() => forvaltKonto ?? konton[0]?.id ?? '')
   const [till, setTill] = useState('')
+  const [kopia, setKopia] = useState('')
+  const [hemligKopia, setHemligKopia] = useState('')
+  const [visaKopia, setVisaKopia] = useState(false)
   const [amne, setAmne] = useState('')
   const [text, setText] = useState('')
   const [skickar, setSkickar] = useState(false)
@@ -1809,7 +1823,39 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
               placeholder="mottagare@exempel.se"
               className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
             />
+            {/* Bakom en länk tills de behövs, som i alla andra klienter. Två
+                tomma fält man aldrig fyller i är bara brus ovanför brevet. */}
+            {!visaKopia && (
+              <button
+                onClick={() => setVisaKopia(true)}
+                className="shrink-0 text-[11px] text-muted underline decoration-dotted underline-offset-2 hover:text-ink"
+              >
+                Kopia
+              </button>
+            )}
           </div>
+          {visaKopia && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-12 shrink-0 text-muted">Kopia</span>
+              <input
+                value={kopia}
+                onChange={(e) => setKopia(e.target.value)}
+                placeholder="ser alla mottagare"
+                className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+              />
+            </div>
+          )}
+          {visaKopia && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-12 shrink-0 text-muted">Hemlig</span>
+              <input
+                value={hemligKopia}
+                onChange={(e) => setHemligKopia(e.target.value)}
+                placeholder="syns inte för de andra"
+                className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+              />
+            </div>
+          )}
           <div className="flex items-center gap-2 text-xs">
             <span className="w-12 shrink-0 text-muted">Ämne</span>
             <input
@@ -1856,7 +1902,9 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
               setSkickar(true); setResultat(null)
               try {
                 const r = await onSkicka({
-                  fromAccountId: fran, to: till.trim(), subject: amne, body: text,
+                  fromAccountId: fran, to: till.trim(),
+                  cc: adresslista(kopia), bcc: adresslista(hemligKopia),
+                  subject: amne, body: text,
                   attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
                 })
                 if (r?.fel) setResultat({ fel: r.fel })
@@ -1906,7 +1954,9 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
   // Svarsruta — avsändaren förvald till kontot mejlet kom till.
   // Samma ruta används för att svara och för att vidarebefordra; det som
   // skiljer är mottagare, ämnesrad och hur originalet återges.
-  const [lage, setLage] = useState<'svar' | 'vidare' | null>(null)
+  const [lage, setLage] = useState<'svar' | 'svaraAlla' | 'vidare' | null>(null)
+  const [kopia, setKopia] = useState('')
+  const [visaKopia, setVisaKopia] = useState(false)
   const visaSvar = lage !== null
   const [franKonto, setFranKonto] = useState(mejl.account_id)
   const [till, setTill] = useState('')
@@ -1917,23 +1967,28 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
   const [bilagor, setBilagor] = useState<UtgaendeBilaga[]>([])
 
   useEffect(() => {
-    setLage(null); setResultat(null); setBilagor([])
+    setLage(null); setResultat(null); setBilagor([]); setKopia('')
     setFranKonto(mejl.account_id)
     setTill(mejl.from_email ?? '')
     setAmne(/^re:/i.test(mejl.subject) ? mejl.subject : `Re: ${mejl.subject}`)
     setText('')
   }, [mejl.id, mejl.account_id, mejl.from_email, mejl.subject])
 
-  /** Öppnar rutan i rätt läge och fyller i det som skiljer de två åt. */
-  function oppnaRuta(nyttLage: 'svar' | 'vidare') {
+  /** Öppnar rutan i rätt läge och fyller i det som skiljer lägena åt. */
+  function oppnaRuta(nyttLage: 'svar' | 'svaraAlla' | 'vidare') {
     setResultat(null)
     if (nyttLage === 'vidare') {
       // Tom mottagare med flit — vidarebefordran utan adressat är det
       // vanligaste sättet att skicka ett mejl till fel person.
       setTill('')
+      setKopia('')
       setAmne(/^(vb|fwd?):/i.test(mejl.subject) ? mejl.subject : `VB: ${mejl.subject}`)
     } else {
       setTill(mejl.from_email ?? '')
+      // Svara alla: alla utom jag själv. Mina egna adresser måste bort, annars
+      // mejlar jag mig själv varje gång — och avsändaren ska stå i Till, inte
+      // en gång till i Kopia.
+      setKopia(nyttLage === 'svaraAlla' ? ovrigaMottagare.join(', ') : '')
       setAmne(/^re:/i.test(mejl.subject) ? mejl.subject : `Re: ${mejl.subject}`)
     }
     setText('')
@@ -1994,6 +2049,16 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
   const part = motpart(mejl)
   const namn = part.namn
   const allaMottagare = (mejl.to_emails ?? []).filter(Boolean).join(', ')
+  const kopiaRad = (mejl.cc_emails ?? []).filter(Boolean).join(', ')
+
+  // Alla som var med, utom mina egna adresser och avsändaren (som hamnar i
+  // Till). Skiftläge spelar ingen roll i en mejladress.
+  const minaAdresser = new Set(konton.map((k) => k.email.toLowerCase()))
+  const ovrigaMottagare = [...(mejl.to_emails ?? []), ...(mejl.cc_emails ?? [])]
+    .filter(Boolean)
+    .filter((a) => !minaAdresser.has(a.toLowerCase()) && a.toLowerCase() !== (mejl.from_email ?? '').toLowerCase())
+    .filter((a, i, alla) => alla.findIndex((b) => b.toLowerCase() === a.toLowerCase()) === i)
+
 
   return (
     // h-full bara från lg. På telefonen finns ingen höjd att fylla — där
@@ -2011,6 +2076,14 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
           </button>
         )}
         <Verktyg ikon="✏️" text="Svara" aktiv={lage === 'svar'} onClick={() => (lage === 'svar' ? setLage(null) : oppnaRuta('svar'))} />
+        {ovrigaMottagare.length > 0 && (
+          <Verktyg
+            ikon="↩↩"
+            text={`Svara alla (${ovrigaMottagare.length + 1})`}
+            aktiv={lage === 'svaraAlla'}
+            onClick={() => (lage === 'svaraAlla' ? setLage(null) : oppnaRuta('svaraAlla'))}
+          />
+        )}
         <Verktyg ikon="↪️" text="Vidarebefordra" aktiv={lage === 'vidare'} onClick={() => (lage === 'vidare' ? setLage(null) : oppnaRuta('vidare'))} />
         <Verktyg ikon="↩️" text={mejl.reply_later ? 'I svarshögen' : 'Svara senare'} aktiv={mejl.reply_later} onClick={onSvaraSenare} />
         <Verktyg ikon="📁" text={flyttar ? 'Flyttar…' : 'Flytta till…'} aktiv={visaFlytt} onClick={() => { if (!flyttar) { setVisaFlytt(!visaFlytt); setFlyttSok('') } }} />
@@ -2139,9 +2212,22 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
               </p>
               {/* I Skickat är avsändaren jag själv — då är hela mottagarlistan
                   det intressanta, inte min egen adress igen. */}
+              {/* Vilka andra som fick mejlet. Datan har alltid legat i
+                  databasen men aldrig visats, och utan den gar det inte att
+                  veta om ett svar bor ga till en person eller till sju. */}
               <p className="truncate text-xs text-muted">
                 {mejl.visad_roll === 'sent' ? allaMottagare : mejl.from_email}
               </p>
+              {mejl.visad_roll !== 'sent' && allaMottagare && (
+                <p className="truncate text-[11px] text-muted/70" title={allaMottagare}>
+                  till {allaMottagare}
+                </p>
+              )}
+              {kopiaRad && (
+                <p className="truncate text-[11px] text-muted/70" title={kopiaRad}>
+                  kopia {kopiaRad}
+                </p>
+              )}
             </div>
             <span className="shrink-0 text-xs text-muted">
               {mejl.sent_at && format(parseISO(mejl.sent_at), 'd MMM yyyy HH:mm', { locale: sv })}
@@ -2251,6 +2337,24 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
               placeholder="Till"
               className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
             />
+            {/* Kopiefältet står framme så fort det finns något i det, alltså
+                alltid vid Svara alla. Annars ligger det bakom en länk — ett
+                tomt fält som aldrig används är bara brus. */}
+            {(kopia || visaKopia) ? (
+              <input
+                value={kopia}
+                onChange={(e) => setKopia(e.target.value)}
+                placeholder="Kopia"
+                className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+              />
+            ) : (
+              <button
+                onClick={() => setVisaKopia(true)}
+                className="text-[11px] text-muted underline decoration-dotted underline-offset-2 hover:text-ink"
+              >
+                + Kopia
+              </button>
+            )}
             <input
               value={amne}
               onChange={(e) => setAmne(e.target.value)}
@@ -2302,7 +2406,7 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
                   setSkickar(true); setResultat(null)
                   try {
                     const r = await onSkicka({
-                      fromAccountId: franKonto, to: till.trim(), subject: amne, body: text,
+                      fromAccountId: franKonto, to: till.trim(), cc: adresslista(kopia), subject: amne, body: text,
                       attachments: bilagor.map(({ filename, contentType, dataBase64 }) => ({ filename, contentType, dataBase64 })),
                       // Ett vidarebefordrat mejl är inte ett svar. Sätts
                       // In-Reply-To hamnar det i mottagarens tråd med någon

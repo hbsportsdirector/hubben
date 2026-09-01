@@ -221,7 +221,7 @@ Deno.serve(async (req: Request) => {
   const { data: { user } } = await anv.auth.getUser();
   if (!user) return svar({ fel: "Inte inloggad" }, 401);
 
-  const { fromAccountId, to, cc, subject, body, inReplyToId, attachments } = await req.json().catch(() => ({}));
+  const { fromAccountId, to, cc, bcc, subject, body, inReplyToId, attachments } = await req.json().catch(() => ({}));
   if (!fromAccountId || !to || !body) return svar({ fel: "fromAccountId, to och body kravs" }, 400);
 
   const bilagor: Bilaga[] = Array.isArray(attachments) ? attachments : [];
@@ -281,7 +281,12 @@ Deno.serve(async (req: Request) => {
   // rackte for att servern skulle neka mejlet.
   const tillLista = delaAdresser(to);
   const ccLista = delaAdresser(cc);
-  const mottagare: string[] = [...tillLista, ...ccLista].map(baraAdress);
+  // Hemlig kopia delas och valideras som de andra, men star ALDRIG i ett
+  // huvud - det ar hela definitionen av hemlig. Skrivs den ut i ett
+  // Bcc-huvud ser varje mottagare vem mer som fick mejlet, och da ar loftet
+  // brutet. Darfor finns bccLista bara har nere, i kuvertet.
+  const bccLista = delaAdresser(bcc);
+  const mottagare: string[] = [...tillLista, ...ccLista, ...bccLista].map(baraAdress);
   if (!mottagare.length) return await misslyckades("Ingen mottagare angiven", 400);
   const trasig = mottagare.find((a) => !RIMLIG_ADRESS.test(a));
   if (trasig) return await misslyckades('"' + trasig + '" ser inte ut som en mejladress', 400);
