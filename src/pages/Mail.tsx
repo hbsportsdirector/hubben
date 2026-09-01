@@ -6,6 +6,7 @@ import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { getUserId } from '../lib/data'
 import { Spinner, EmptyState } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
+import { AdressFalt } from '../components/AdressFalt'
 import { MejlTillHubben, DagensSchema } from '../components/MejlTillHubben'
 
 /** Bygger en tsquery av det man skrivit i sökrutan.
@@ -1817,11 +1818,11 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
           </div>
           <div className="flex items-center gap-2 text-xs">
             <span className="w-12 shrink-0 text-muted">Till</span>
-            <input
+            <AdressFalt
               value={till}
-              onChange={(e) => setTill(e.target.value)}
+              onChange={setTill}
               placeholder="mottagare@exempel.se"
-              className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+              className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
             />
             {/* Bakom en länk tills de behövs, som i alla andra klienter. Två
                 tomma fält man aldrig fyller i är bara brus ovanför brevet. */}
@@ -1837,22 +1838,22 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
           {visaKopia && (
             <div className="flex items-center gap-2 text-xs">
               <span className="w-12 shrink-0 text-muted">Kopia</span>
-              <input
+              <AdressFalt
                 value={kopia}
-                onChange={(e) => setKopia(e.target.value)}
+                onChange={setKopia}
                 placeholder="ser alla mottagare"
-                className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+                className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
               />
             </div>
           )}
           {visaKopia && (
             <div className="flex items-center gap-2 text-xs">
               <span className="w-12 shrink-0 text-muted">Hemlig</span>
-              <input
+              <AdressFalt
                 value={hemligKopia}
-                onChange={(e) => setHemligKopia(e.target.value)}
+                onChange={setHemligKopia}
                 placeholder="syns inte för de andra"
-                className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
+                className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
               />
             </div>
           )}
@@ -2331,9 +2332,9 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
               )}
             </div>
 
-            <input
+            <AdressFalt
               value={till}
-              onChange={(e) => setTill(e.target.value)}
+              onChange={setTill}
               placeholder="Till"
               className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
             />
@@ -2341,9 +2342,9 @@ function Lasruta({ mejl, trad, valdIdITrad, onValjITrad, konto, mappar, konton, 
                 alltid vid Svara alla. Annars ligger det bakom en länk — ett
                 tomt fält som aldrig används är bara brus. */}
             {(kopia || visaKopia) ? (
-              <input
+              <AdressFalt
                 value={kopia}
-                onChange={(e) => setKopia(e.target.value)}
+                onChange={setKopia}
                 placeholder="Kopia"
                 className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent"
               />
