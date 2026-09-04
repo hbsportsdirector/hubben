@@ -317,6 +317,7 @@ export default function Mail() {
   const [mappar, setMappar] = useState<Mapp[]>([])
   const [valdId, setValdId] = useState<string | null>(null)
   const [laddar, setLaddar] = useState(true)
+  const [listFel, setListFel] = useState<string | null>(null)
   const [antal, setAntal] = useState<Record<string, number>>({})
   const [synkarMapp, setSynkarMapp] = useState<string | null>(null)
   const [visaFlytt, setVisaFlytt] = useState(false)
@@ -634,9 +635,16 @@ export default function Mail() {
       }
     }
 
-    const { data } = await q
-    // Listan byts ut på plats — ingen spinner, inget hopp
-    setMejl((data ?? []) as Mejl[])
+    const { data, error } = await q
+    // Ett fel MÅSTE synas. Slukas det ser en trasig fråga likadan ut som
+    // en tom inkorg, och det enda som händer är att mejlen ser ut att ha
+    // försvunnit. Det hände skarpt: answered lades till i kolumnlistan
+    // utan att finnas i vyn hub_mejl, hela frågan föll, och räknaren sa
+    // 262 medan listan sa "Tomt här".
+    setListFel(error ? (error.message || 'Kunde inte hämta listan') : null)
+    // Listan byts ut på plats — ingen spinner, inget hopp. Men bara när
+    // hämtningen gick bra: annars tömmer ett fel listan man redan har.
+    if (!error) setMejl((data ?? []) as Mejl[])
     setLaddar(false)
   }, [lada, kontoFilter, mappFilter, sok, dataVersion, visaSorterade])
 
@@ -1351,7 +1359,12 @@ export default function Mail() {
           )}
 
           <div ref={listRef} className="flex-1 overflow-y-auto">
-            {laddar ? <Spinner /> : mejl.length === 0 ? (
+            {listFel ? (
+              <div className="m-3 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2.5 text-xs text-bad">
+                <p className="font-medium">Listan kunde inte hämtas — dina mejl finns kvar.</p>
+                <p className="mt-1 text-bad/80">{listFel}</p>
+              </div>
+            ) : laddar ? <Spinner /> : mejl.length === 0 ? (
               <EmptyState emoji="✨" text={sok ? 'Inga träffar.' : 'Tomt här.'} />
             ) : (
               tradar.map((trad, index) => {
