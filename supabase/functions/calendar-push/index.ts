@@ -159,7 +159,7 @@ Deno.serve(async (req: Request) => {
   const admin = createClient(U, S);
 
   const { data: koade } = await admin.from("hub_events")
-    .select("id, calendar_id, pending_till_kalender, external_id, series_master_id, rrule, title, description, location, starts_at, ends_at, all_day, color, pending_op, pending_scope, pending_forsok")
+    .select("id, calendar_id, pending_till_kalender, external_id, series_master_id, rrule, title, description, location, starts_at, ends_at, all_day, color, pending_op, pending_scope, pending_forsok, oppettid_id")
     .eq("user_id", user.id)
     .not("pending_op", "is", null)
     .lte("pending_nasta", new Date().toISOString())
@@ -279,6 +279,15 @@ Deno.serve(async (req: Request) => {
         if (!r.ok || !j.id) throw new Error(String(j.error?.message ?? r.status).slice(0, 200));
 
         if (e.rrule) {
+          // Kommer serien fran en oppettid maste Googles id sparas INNAN
+          // raden slapps. Efter det finns ingen koppling kvar: synken hamtar
+          // hem tillfallena som nya rader utan oppettid_id, och utan serie_id
+          // skulle bokningssidan tro att Pers egna bokningsbara tider ar
+          // upptagna moten - alltsa krocka med sig sjalva och visa noll tider.
+          if (e.oppettid_id) {
+            await admin.from("hub_oppettider")
+              .update({ serie_id: j.id }).eq("id", e.oppettid_id);
+          }
           // En serie: Google svarar med MODERHANDELSEN, inte tillfallena.
           // Behaller vi den raden far vi forsta tillfallet dubbelt sa fort
           // synken hamtar hem de expanderade tillfallena. Battre att slappa
