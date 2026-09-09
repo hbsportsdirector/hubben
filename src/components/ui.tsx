@@ -50,7 +50,11 @@ export function Label({ children }: { children: ReactNode }) {
   return <label className="mb-1 block text-xs font-medium text-muted">{children}</label>
 }
 
-export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
+export function Modal({ open, onClose, title, children, footer }: {
+  open: boolean; onClose: () => void; title: string; children: ReactNode
+  /** Knapprad som ska stå still. Se kommentaren nedanför. */
+  footer?: ReactNode
+}) {
   if (!open) return null
   return (
     // Två saker gjorde att knappraden längst ner i rutan — Spara — inte gick
@@ -76,10 +80,17 @@ export function Modal({ open, onClose, title, children }: { open: boolean; onClo
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
         </div>
-        {/* Bara innehållet rullar, rubriken står kvar. Knappraden ligger sist
-            i innehållet hos alla nio som använder rutan, så den nås genom att
-            rulla — det som saknades var att rutan alls fick plats. */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">{children}</div>
+        {/* Bara innehållet rullar, rubriken står kvar.
+
+            Knappraden låg förut sist i innehållet, alltså inne i det som
+            rullar. I en lång ruta — kalenderns har nio fält — hamnade Spara
+            nedanför kanten, och ingenting visade att det gick att rulla. Det
+            såg ut som att knappen inte fanns. Skickas den in som footer
+            ligger den utanför rullningen och syns alltid. */}
+        <div className={`min-h-0 flex-1 overflow-y-auto px-6 ${footer ? 'pb-4' : 'pb-6'}`}>{children}</div>
+        {footer && (
+          <div className="shrink-0 border-t border-border px-6 py-4">{footer}</div>
+        )}
       </div>
     </div>
   )

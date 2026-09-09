@@ -115,6 +115,21 @@ export function tolkaTid(rå: string): string | null {
   return null
 }
 
+/** Datum och klockslag till en tidpunkt, eller null när något inte går att
+ *  tolka.
+ *
+ *  Finns för att en halvskriven tid ALDRIG ska bli ett Invalid Date. Ett
+ *  sådant kastar inte där det skapas utan först när någon gör toISOString()
+ *  på det, ofta i en annan funktion — och blir det inuti ett löfte syns bara
+ *  "Invalid time value" utan minsta ledtråd om var det kom ifrån. */
+export function tidsstampel(datum: string, tid: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(datum)) return null
+  const t = tolkaTid(tid)
+  if (!t) return null
+  const d = new Date(`${datum}T${t}:00`)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
 interface Kalender {
   id: string
   namn: string
@@ -564,6 +579,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   const [endTime, setEndTime] = useState('')
   const [allDay, setAllDay] = useState(false)
   const [color, setColor] = useState(EVENT_COLORS[0])
+  const [sparfel, setSparfel] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -626,8 +642,16 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   useEffect(() => {
     if (!open || !date) { setKrockar([]); return }
     let avbruten = false
-    const starts = allDay ? new Date(`${date}T00:00:00`) : new Date(`${date}T${time}:00`)
-    const ends = !allDay && endTime ? new Date(`${date}T${endTime}:00`) : addHours(starts, 1)
+    // Tiderna måste tolkas här också, inte bara när det sparas. Effekten kör
+    // vid varje tangenttryckning, och mitt i "1700" är strängen "1" eller
+    // "170" — det gav ett Invalid Date vars toISOString() kastade nere i
+    // löftet och slog upp "Något gick fel" över hela sidan.
+    const startTid = allDay ? new Date(`${date}T00:00:00`) : tidsstampel(date, time)
+    const slutTid = !allDay && endTime.trim() ? tidsstampel(date, endTime) : null
+    // Går tiden inte att tolka än finns det heller inget att varna för.
+    if (!startTid || Number.isNaN(startTid.getTime())) { setKrockar([]); return }
+    const starts = startTid
+    const ends = slutTid ?? addHours(starts, 1)
     ;(async () => {
       const { data } = await supabase
         .from('hub_events')
@@ -660,6 +684,14 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
     const slut = endTime.trim() ? tolkaTid(endTime) : null
     const starts = allDay ? new Date(`${date}T00:00:00Z`) : new Date(`${date}T${start}:00`)
     const ends = !allDay && slut ? new Date(`${date}T${slut}:00`) : null
+    // Sista spärren. Kommer ett ogiltigt datum hit kastar toISOString() nedan
+    // med "Invalid time value", och det säger ingenting om vilket fält som är
+    // fel. Hellre en mening man kan göra något åt.
+    if (Number.isNaN(starts.getTime()) || (ends && Number.isNaN(ends.getTime()))) {
+      setSparfel('Kontrollera datum och klockslag — tiden gick inte att tolka.')
+      return
+    }
+    setSparfel(null)
     const payload = {
       title: title.trim(),
       description: description.trim() || null,
@@ -711,7 +743,29 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={event ? 'Redigera händelse' : 'Ny händelse'}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={event ? 'Redigera händelse' : 'Ny händelse'}
+      footer={
+        <>
+          {sparfel && (
+            <p className="mb-2 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{sparfel}</p>
+          )}
+          <div className="flex justify-between gap-2">
+            {event ? (
+              <Button variant="danger" onClick={() => onDelete(event.id, omfattning)}>
+                {iSerie && omfattning === 'serie' ? 'Ta bort hela serien' : 'Ta bort'}
+              </Button>
+            ) : <span />}
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>Avbryt</Button>
+              <Button onClick={save}>Spara</Button>
+            </div>
+          </div>
+        </>
+      }
+    >
       <div className="space-y-4">
         <div>
           <Label>Titel</Label>
@@ -917,17 +971,6 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
           <p className="mt-1 text-xs text-muted">
             Googles egna färger — det du väljer syns även i telefonens kalender.
           </p>
-        </div>
-        <div className="flex justify-between gap-2 pt-2">
-          {event ? (
-            <Button variant="danger" onClick={() => onDelete(event.id, omfattning)}>
-              {iSerie && omfattning === 'serie' ? 'Ta bort hela serien' : 'Ta bort'}
-            </Button>
-          ) : <span />}
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose}>Avbryt</Button>
-            <Button onClick={save}>Spara</Button>
-          </div>
         </div>
       </div>
     </Modal>
