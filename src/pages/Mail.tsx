@@ -1680,7 +1680,7 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
     // Samma tak som den delade rutan i ui.tsx, av samma två skäl: dvh mäter
     // det som syns på iOS, och marginalen nertill håller undan bottennavet.
     <div
-      className="fixed inset-0 z-50 flex h-[100dvh] items-start justify-center p-4 pb-[calc(5.9rem+env(safe-area-inset-bottom))] pt-[max(1rem,5vh)] md:pb-4"
+      className="fixed inset-0 z-50 flex h-[calc(100dvh/var(--sidzoom,1))] items-start justify-center overflow-y-auto p-4 pb-[calc(5.9rem+env(safe-area-inset-bottom))] pt-[max(1rem,5vh)] md:pb-4"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
@@ -1842,13 +1842,13 @@ function NyttMejl({ onClose, konton, forvaltKonto, onSkicka }: {
   const stang = () => { if (!skickar) onClose() }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[max(1rem,5vh)]" onMouseDown={(e) => e.target === e.currentTarget && stang()}>
+    <div className="fixed inset-0 z-50 flex h-[calc(100dvh/var(--sidzoom,1))] items-start justify-center overflow-y-auto p-4 pt-[max(1rem,5vh)]" onMouseDown={(e) => e.target === e.currentTarget && stang()}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       {/* dvh, inte vh: pa telefonen andras fonsterhojden nar adressfaltet
           glider undan, och vh raknar pa den storsta hojden. Rutan far aldrig
           bli hogre an det som faktiskt syns - da hamnar Skicka utanfor
           kanten utan att ga att na. */}
-      <div className="relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div className="relative z-10 my-auto flex max-h-[calc(100dvh/var(--sidzoom,1)-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <h3 className="font-semibold">Nytt mejl</h3>
           <button onClick={stang} disabled={skickar} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink disabled:opacity-40" aria-label="Stäng">✕</button>

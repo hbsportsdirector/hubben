@@ -30,6 +30,18 @@ function anvand(varde: number) {
   // 100 % lämnas orört — en tom sträng är inte samma sak som "zoom: 1" för
   // webbläsare som inte kan zoom alls.
   document.body.style.zoom = varde === 100 ? '' : String(varde / 100)
+
+  // Samma tal som en CSS-variabel, för rutor som måste veta om det.
+  //
+  // zoom skalar allt UTOM viewport-enheterna: 100dvh är fortfarande hela
+  // fönsterhöjden i layoutpixlar, och de ritas sedan 1,5 gånger så stora. En
+  // ruta med max-height: 100dvh blev därför 1,5 fönster hög, och knappraden
+  // hamnade utanför skärmen. Uppmätt vid 150 %: foten på 891 i ett 610 px
+  // fönster. Med calc(100dvh / var(--sidzoom)) hamnade den på 586.
+  //
+  // Variabeln sitter på <html>, inte på <body> — body är det som zoomas, och
+  // en variabel som läses inifrån det zoomade trädet ska komma utifrån det.
+  document.documentElement.style.setProperty('--sidzoom', String(varde / 100))
 }
 
 /** Körs vid start, innan React ritar något, så sidan inte hoppar. */
