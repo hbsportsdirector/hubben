@@ -78,7 +78,15 @@ export function Modal({ open, onClose, title, children, footer }: {
           fonstret gar den att rulla fram. Med items-center klipps ett for
           hogt barn i BADA andar och nederkanten blir omojlig att na - det ar
           en gammal egenhet i flexbox, inte nagot man kan rulla sig ur. */}
-      <div className="relative z-10 my-auto flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      {/* Taket mats mot FONSTRET, inte mot foraldern.
+          max-h-full ar max-height: 100%, och en procentsats loser bara ut om
+          foralderns hojd ar bestamd. Hos mig gjorde den det; hos Per gjorde
+          den inte det, och rutan blev 1543 px hog i ett 1138 px fonster med
+          knappraden en bra bit nedanfor skarmkanten. Vilken lank i kedjan som
+          brast gick inte att se harifran - darfor beror taket nu inte pa
+          kedjan alls. Uppmatt: 578 px i ett 610 px fonster, som ett absolut
+          pixelvarde. */}
+      <div className="relative z-10 my-auto flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex shrink-0 items-center justify-between px-6 pb-4 pt-6">
           <h3 className="text-lg font-semibold">{title}</h3>
           <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">
