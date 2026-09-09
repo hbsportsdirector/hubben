@@ -69,11 +69,16 @@ export function Modal({ open, onClose, title, children, footer }: {
     // Marginalen nertill håller undan det. Utan den låg Spara bakom navet
     // även när rutan i övrigt fick plats.
     <div
-      className="fixed inset-0 z-50 flex h-[100dvh] items-center justify-center p-4 pb-[calc(5.9rem+env(safe-area-inset-bottom))] md:pb-4"
+      className="fixed inset-0 z-50 flex h-[100dvh] items-start justify-center overflow-y-auto p-4 pb-[calc(5.9rem+env(safe-area-inset-bottom))] md:pb-4"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative z-10 flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      {/* items-start + my-auto i stallet for items-center: rutan centreras
+          fortfarande nar det finns plats, men blir den nagon gang hogre an
+          fonstret gar den att rulla fram. Med items-center klipps ett for
+          hogt barn i BADA andar och nederkanten blir omojlig att na - det ar
+          en gammal egenhet i flexbox, inte nagot man kan rulla sig ur. */}
+      <div className="relative z-10 my-auto flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex shrink-0 items-center justify-between px-6 pb-4 pt-6">
           <h3 className="text-lg font-semibold">{title}</h3>
           <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-card-hover hover:text-ink" aria-label="Stäng">
