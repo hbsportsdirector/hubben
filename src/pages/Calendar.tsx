@@ -666,6 +666,20 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
     }
   }, [open, event, kalendrar, valdKalender])
 
+  // Veckodagen för en upprepning följer datumet man valt.
+  //
+  // Den sattes förut EN gång när rutan öppnades, utifrån dagens datum. Öppnade
+  // man rutan på en onsdag och satte datumet till tisdag blev regeln "varje
+  // onsdag" — en serie vars första tillfälle ligger på fel veckodag. Inget i
+  // gränssnittet avslöjade det, för chipsen visade den gamla dagen.
+  useEffect(() => {
+    if (event || !date) return
+    // Mitt på dagen: undviker att en tidszonsförskjutning flyttar dagen.
+    const d = new Date(`${date}T12:00:00`)
+    if (Number.isNaN(d.getTime())) return
+    setVeckodagar([VECKODAGAR[(d.getDay() + 6) % 7].kod])
+  }, [date, event])
+
   // Krockvarning: som sportchef bokar man många lag, och en dubbelbokning
   // vill man se innan man sparar — inte efteråt.
   useEffect(() => {

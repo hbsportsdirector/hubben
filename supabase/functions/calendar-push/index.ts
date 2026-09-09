@@ -125,7 +125,7 @@ function iZon(ms: number, tz: string) {
  *  klockslaget galler over sommartidsskiftet.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function tillGoogle(e: any, tz: string) {
+function tillGoogle(e: any, tz: string, vidPatch = false) {
   const start = Date.parse(e.starts_at);
   const gemensamt = {
     summary: e.title ?? "",
@@ -134,17 +134,28 @@ function tillGoogle(e: any, tz: string) {
     // Utan colorId visar Google kalenderns farg och synken skriver tillbaka den
     colorId: fargId(e.color) ?? undefined,
   };
+  // Vid en PATCH skickas det andra faltet som null.
+  //
+  // En handelse hos Google har antingen date eller dateTime - aldrig bada. Vid
+  // en PATCH ligger det gamla faltet kvar om man inte uttryckligen tommer det,
+  // och da far handelsen bada. Google svarar "Invalid start time." och
+  // andringen fastnar i kon for alltid. Det hande skarpt: "USM Eskilstuna"
+  // var en heldag som gjordes om till tidsatt, och fastnade pa fem forsok.
   if (e.all_day) {
     const slutRaa = e.ends_at ? Date.parse(e.ends_at) : start;
     const slut = slutRaa > start ? slutRaa : start + DYGN;
-    return { ...gemensamt, start: { date: datumdel(start) }, end: { date: datumdel(slut) } };
+    return {
+      ...gemensamt,
+      start: { date: datumdel(start), ...(vidPatch ? { dateTime: null } : {}) },
+      end: { date: datumdel(slut), ...(vidPatch ? { dateTime: null } : {}) },
+    };
   }
   const slutRaa = e.ends_at ? Date.parse(e.ends_at) : start + 3600000;
   const slut = slutRaa > start ? slutRaa : start + 3600000;
   return {
     ...gemensamt,
-    start: { dateTime: new Date(start).toISOString(), timeZone: tz },
-    end: { dateTime: new Date(slut).toISOString(), timeZone: tz },
+    start: { dateTime: new Date(start).toISOString(), timeZone: tz, ...(vidPatch ? { date: null } : {}) },
+    end: { dateTime: new Date(slut).toISOString(), timeZone: tz, ...(vidPatch ? { date: null } : {}) },
   };
 }
 
@@ -355,7 +366,7 @@ Deno.serve(async (req: Request) => {
       /* ---- Andra ---- */
       if (!helaSerien) {
         const r = await fetch(bas + "/" + encodeURIComponent(malId), {
-          method: "PATCH", headers: huvud, body: JSON.stringify(tillGoogle(e, tz)),
+          method: "PATCH", headers: huvud, body: JSON.stringify(tillGoogle(e, tz, true)),
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(String(j.error?.message ?? r.status).slice(0, 200));
