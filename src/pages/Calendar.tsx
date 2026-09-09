@@ -703,7 +703,11 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   }, [open, date, time, endTime, allDay, event?.id])
 
   async function save() {
-    if (!title.trim() || !date) return
+    // Sade förut ingenting alls. Man tryckte Spara, ingenting hände, och det
+    // gick inte att gissa att titeln var tom — allra minst i en ruta där man
+    // behövt rulla för att hitta knappen.
+    if (!title.trim()) { setSparfel('Skriv en titel först.'); return }
+    if (!date) { setSparfel('Välj ett datum först.'); return }
     // Heldagar lagras som midnatt UTC, precis som de vi hämtar från Google.
     // Med lokal midnatt blev tidsstämpeln 22:00 dagen innan, och då pekade
     // datumdelen på fel dag när den skickades tillbaka till Google.
@@ -751,6 +755,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
         }
       : {}
 
+    try {
     if (event) {
       await supabase.from('hub_events').update({
         ...payload,
@@ -773,6 +778,12 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       await supabase.from('hub_events').insert({
         ...payload, ...ko, rrule, calendar_id: kalenderId, user_id: userId,
       }).throwOnError()
+    }
+    } catch (e) {
+      // Felet hör hemma i rutan man står i, inte i ett meddelande som glider
+      // förbi någon annanstans på sidan.
+      setSparfel(e instanceof Error ? e.message : String(e))
+      return
     }
     onClose()
     onSaved(!!kalenderId)
