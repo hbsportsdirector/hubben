@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tolkaTid, tidsstampel } from './Calendar'
+import { tolkaTid, tidsstampel, dygnsSpann } from './Calendar'
 
 describe('tolkaTid', () => {
   it('tar emot det man faktiskt skriver', () => {
@@ -51,5 +51,21 @@ describe('tidsstampel', () => {
   // krockvarningen stå över tills tiden är rimlig, inte lita på null ensamt.
   it('tolkar en ensam siffra som hel timme', () => {
     expect(tidsstampel('2026-09-04', '1')!.getHours()).toBe(1)
+  })
+})
+
+describe('dygnsSpann', () => {
+  // En cup fredag–söndag är tre dagar. Räknar man bara mellanrummet blir det
+  // två, och sista dagen ser ut att saknas.
+  it('räknar båda ändarna', () => {
+    expect(dygnsSpann('2026-09-04', '2026-09-06')).toBe(3)
+    expect(dygnsSpann('2026-09-04', '2026-09-04')).toBe(1)
+    expect(dygnsSpann('2026-09-04', '2026-09-05')).toBe(2)
+  })
+
+  it('klarar månadsskifte och sommartidsskifte', () => {
+    expect(dygnsSpann('2026-08-30', '2026-09-02')).toBe(4)
+    // Sista helgen i oktober: klockan ställs om mitt i spannet
+    expect(dygnsSpann('2026-10-24', '2026-10-26')).toBe(3)
   })
 })

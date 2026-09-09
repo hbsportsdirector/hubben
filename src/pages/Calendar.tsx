@@ -122,6 +122,12 @@ export function tolkaTid(rå: string): string | null {
  *  sådant kastar inte där det skapas utan först när någon gör toISOString()
  *  på det, ofta i en annan funktion — och blir det inuti ett löfte syns bara
  *  "Invalid time value" utan minsta ledtråd om var det kom ifrån. */
+/** Hur många dagar ett spann täcker, båda ändarna inräknade. En cup fredag
+ *  till söndag är tre dagar, inte två. */
+export function dygnsSpann(fran: string, till: string) {
+  return Math.round((Date.parse(till + 'T00:00:00Z') - Date.parse(fran + 'T00:00:00Z')) / 86400000) + 1
+}
+
 export function tidsstampel(datum: string, tid: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(datum)) return null
   const t = tolkaTid(tid)
@@ -265,7 +271,9 @@ export default function Calendar() {
       const json = await res.json().catch(() => ({}))
       // Skapades en serie svarade Google med moderhändelsen, inte tillfällena.
       // De kommer först vid en hämtning — utan den ser man bara en enda gång.
-      if (json.nyaSerier > 0) {
+      // Samma sak när en serie flyttats i datum: Google har räknat om alla
+      // tillfällen, och vi vet bara vad moderhändelsen säger.
+      if (json.nyaSerier > 0 || json.serierFlyttade > 0) {
         await fetch(`${supabaseUrl}/functions/v1/calendar-sync`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabaseKey },
@@ -288,7 +296,12 @@ export default function Calendar() {
       .from('hub_events')
       .update({
         starts_at: start.toISOString(),
-        ends_at: allDay ? null : end.toISOString(),
+        // Heldagar fick förr ends_at: null. En cup över tre dagar kollapsade
+        // därmed till en enda så fort man drog i den — och att dra i den är
+        // just vad man gör när ett läger flyttas. Slutet kalendern ger
+        // tillbaka är riktigt i båda fallen, både vid flytt och vid att man
+        // drar i kanten.
+        ends_at: end > start ? end.toISOString() : null,
         all_day: allDay,
         // Hor handelsen till en Google-kalender ska andringen dit ocksa
         ...(ev.raw.calendar_id ? { pending_op: 'andra', pending_nasta: new Date().toISOString(), pending_forsok: 0 } : {}),
@@ -578,6 +591,10 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   const [time, setTime] = useState('12:00')
   const [endTime, setEndTime] = useState('')
   const [allDay, setAllDay] = useState(false)
+  // Cuper och traningslager gar over flera dygn. Utan ett eget slutdatum gick
+  // de inte att lagga in alls - rutan hade bara ETT datum.
+  const [slutDatum, setSlutDatum] = useState('')
+  const [visaSlutDatum, setVisaSlutDatum] = useState(false)
   const [color, setColor] = useState(EVENT_COLORS[0])
   const [sparfel, setSparfel] = useState<string | null>(null)
 
@@ -591,6 +608,17 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       setDate(format(start, 'yyyy-MM-dd'))
       setTime(format(start, 'HH:mm'))
       setEndTime(event.ends_at ? format(parseISO(event.ends_at), 'HH:mm') : '')
+      // Slutdatumet visas bara när det skiljer sig från startdagen. Heldagar
+      // lagras med EXKLUSIVT slut, precis som hos Google: en cup 4–6 sep har
+      // ends_at den 7:e, så ett dygn dras av för att visa det Per skrev in.
+      {
+        const slutRaa = event.ends_at ? parseISO(event.ends_at) : null
+        const visat = slutRaa
+          ? format(event.all_day ? addDays(slutRaa, -1) : slutRaa, 'yyyy-MM-dd')
+          : ''
+        setSlutDatum(visat && visat !== format(start, 'yyyy-MM-dd') ? visat : '')
+        setVisaSlutDatum(false)
+      }
       setAllDay(event.all_day)
       setColor(event.color)
       setValdKalender(event.pending_till_kalender ?? event.calendar_id ?? '')
@@ -615,6 +643,7 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
       setDate(format(start, 'yyyy-MM-dd'))
       setTime(format(initialStart ?? new Date(), 'HH:mm'))
       setEndTime(initialEnd && !isWholeDay ? format(initialEnd, 'HH:mm') : '')
+      setSlutDatum(''); setVisaSlutDatum(false)
       setAllDay(isWholeDay)
       setColor(EVENT_COLORS[0])
       setUpprepning('aldrig')
@@ -683,10 +712,17 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
     const start = tolkaTid(time) ?? '00:00'
     const slut = endTime.trim() ? tolkaTid(endTime) : null
     const starts = allDay ? new Date(`${date}T00:00:00Z`) : new Date(`${date}T${start}:00`)
-    const ends = !allDay && slut ? new Date(`${date}T${slut}:00`) : null
+    // Slutdagen om den är satt och ligger senare, annars startdagen.
+    const slutDag = slutDatum && slutDatum > date ? slutDatum : date
+    const ends = allDay
+      // Heldagar har EXKLUSIVT slut, precis som hos Google: en cup 4–6 sep
+      // lagras som slut den 7:e. Utan dygnet blir sista dagen aldrig med.
+      ? (slutDag > date ? new Date(`${slutDag}T00:00:00Z`) : null)
+      : slut ? new Date(`${slutDag}T${slut}:00`) : null
     // Sista spärren. Kommer ett ogiltigt datum hit kastar toISOString() nedan
     // med "Invalid time value", och det säger ingenting om vilket fält som är
     // fel. Hellre en mening man kan göra något åt.
+    if (allDay && ends) ends.setUTCDate(ends.getUTCDate() + 1)
     if (Number.isNaN(starts.getTime()) || (ends && Number.isNaN(ends.getTime()))) {
       setSparfel('Kontrollera datum och klockslag — tiden gick inte att tolka.')
       return
@@ -905,14 +941,14 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
             </div>
             {omfattning === 'serie' && (
               <p className="mt-2 text-xs text-warn">
-                Ändrar du tiden flyttas alla tillfällen — även de som varit.
+                Ändrar du tid eller datum flyttas hela serien lika mycket — även de tillfällen som redan varit.
               </p>
             )}
           </div>
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>Datum</Label>
+            <Label>{slutDatum && slutDatum !== date ? 'Från' : 'Datum'}</Label>
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
           <div className="flex items-end pb-2">
@@ -922,6 +958,33 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
             </label>
           </div>
         </div>
+        {/* Slutdatum bakom en länk tills det behövs. De allra flesta händelser
+            är en dag lång, och ett fält man aldrig fyller i är brus. */}
+        {slutDatum || visaSlutDatum ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Till och med</Label>
+              <Input
+                type="date"
+                value={slutDatum}
+                min={date}
+                onChange={(e) => setSlutDatum(e.target.value)}
+              />
+            </div>
+            {slutDatum && slutDatum !== date && (
+              <p className="flex items-end pb-2 text-xs text-muted">
+                {dygnsSpann(date, slutDatum)} dagar
+              </p>
+            )}
+          </div>
+        ) : (
+          <button
+            onClick={() => setVisaSlutDatum(true)}
+            className="text-xs text-muted underline decoration-dotted underline-offset-2 hover:text-ink"
+          >
+            + Pågår flera dagar
+          </button>
+        )}
         {!allDay && (
           <div className="grid grid-cols-2 gap-3">
             <div>

@@ -73,6 +73,33 @@ function fargId(hex: string | null | undefined): string | null {
   return bast;
 }
 
+/** Hela dygn mellan tva datum pa formen YYYY-MM-DD.
+ *
+ *  Rakningen gors i UTC med flit. Datumen ar redan omraknade till seriens zon,
+ *  och da ar de rena kalenderdatum - inte tidpunkter. Rakna i lokal tid och
+ *  ett sommartidsskifte mitt emellan ger 20,96 dygn i stallet for 21.
+ */
+function dygnMellan(fran: string, till: string) {
+  return Math.round((Date.parse(till + "T00:00:00Z") - Date.parse(fran + "T00:00:00Z")) / 86400000);
+}
+
+function laggDygn(datum: string, dygn: number) {
+  const d = new Date(Date.parse(datum + "T00:00:00Z") + dygn * 86400000);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Flyttar UNTIL i en upprepningsregel lika manga dygn som serien flyttas.
+ *
+ *  Utan det star slutdatumet kvar nar starten flyttas: drar man serien tre
+ *  veckor bakat far man tre tillfallen EXTRA pa slutet, och framat forsvinner
+ *  tre. "Flytta hela serien" ska flytta hela serien, inte tanja pa den. */
+function flyttaUntil(regler: string[] | undefined, dygn: number) {
+  if (!regler || !dygn) return regler;
+  return regler.map((r) =>
+    r.replace(/UNTIL=(\d{8})(T\d{6}Z)?/i, (_m, d: string, tid: string | undefined) =>
+      "UNTIL=" + laggDygn(d.slice(0, 4) + "-" + d.slice(4, 6) + "-" + d.slice(6, 8), dygn).replace(/-/g, "") + (tid ?? "")));
+}
+
 /** Klockslag och datum sett i en viss tidszon.
  *
  *  Behovs for att andra tiden pa en HEL serie. Rakna i UTC gar bra tills
@@ -163,6 +190,11 @@ Deno.serve(async (req: Request) => {
   let utforda = 0;
   let nyaSerier = 0;
   let flyttade = 0;
+  // En serie som bytt datum maste hamtas hem igen: Google har rakat om alla
+  // tillfallen, och vi vet bara vad moderhandelsen sager. Utan en hamtning
+  // star gamla datum kvar i vyn tills cron-jobbet gar - upp till tio minuter
+  // dar det ser ut som att ingenting hande.
+  let serierFlyttade = 0;
   const problem: { handelse: string; fel: string }[] = [];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -199,7 +231,16 @@ Deno.serve(async (req: Request) => {
   for (const e of koade) {
     const kal = e.calendar_id ? kalender.get(e.calendar_id) : null;
     if (!kal) {
-      await admin.from("hub_events").update({ pending_op: null, pending_scope: null, pending_till_kalender: null, pending_fel: null, pending_forsok: 0 }).eq("id", e.id);
+      // Handelsen hor inte till nagon Google-kalender. Ar den koad for
+      // RADERING finns ingenting att radera dar uppe - men raden ska bort har,
+      // annars ligger den kvar for alltid. Forr toemdes bara kon, och en
+      // raderad handelse kom tillbaka sa fort vyn lastes om.
+      if (e.pending_op === "radera") {
+        await admin.from("hub_events").delete().eq("id", e.id);
+        utforda++;
+      } else {
+        await admin.from("hub_events").update({ pending_op: null, pending_scope: null, pending_till_kalender: null, pending_fel: null, pending_forsok: 0 }).eq("id", e.id);
+      }
       continue;
     }
     // Kalendern handelsen ligger i hos Google just nu. Efter en lyckad flytt
@@ -313,9 +354,17 @@ Deno.serve(async (req: Request) => {
         continue;
       }
 
-      // Hela serien: moderhandelsen behaller SITT datum, men far det nya
-      // klockslaget. Skickade vi tillfallets datum rakt in skulle hela serien
-      // flytta dit i stallet for att bara byta tid.
+      // Hela serien flyttas lika langt som tillfallet flyttades.
+      //
+      // Tillfallets EGNA gamla tid finns inte kvar hos oss - raden skrevs over
+      // nar Per sparade - sa den hamtas fran Google. Skillnaden mellan den och
+      // det nya vardet ar forskjutningen, och samma forskjutning laggs pa
+      // moderhandelsen. Da flyttar hela serien med, i stallet for att bara
+      // moderhandelsen hoppar dit tillfallet lag.
+      //
+      // Forr kastades datumdelen bort helt: bara klockslaget gick fram. Att
+      // andra datum pa en serie gjorde alltsa ingenting alls, trots att rutan
+      // tog emot andringen.
       const mr = await fetch(bas + "/" + encodeURIComponent(malId), { headers: huvud });
       const master = await mr.json().catch(() => ({}));
       if (!mr.ok) throw new Error(String(master.error?.message ?? mr.status).slice(0, 200));
@@ -326,19 +375,46 @@ Deno.serve(async (req: Request) => {
         location: e.location ?? undefined,
       };
 
-      if (!e.all_day && !master.start?.date) {
-        const serieZon = master.start?.timeZone ?? tz;
+      const serieZon = master.start?.timeZone ?? tz;
+      // Tillfallet som det ser ut hos Google JUST NU, alltsa fore andringen
+      const ir = await fetch(bas + "/" + encodeURIComponent(e.external_id ?? ""), { headers: huvud });
+      const instans = ir.ok ? await ir.json().catch(() => null) : null;
+      const gammalStart: string | undefined = instans?.start?.dateTime ?? instans?.start?.date;
+
+      let dygn = 0;
+      if (gammalStart) {
+        const gammalDatum = instans.start.date
+          ? String(instans.start.date)
+          : iZon(Date.parse(gammalStart), serieZon).datum;
+        const nyttDatum = iZon(Date.parse(e.starts_at), serieZon).datum;
+        dygn = dygnMellan(gammalDatum, nyttDatum);
+      }
+
+      if (master.start?.date) {
+        // Heldagsserie: bara datumen finns, och slutdatumet ar exklusivt.
+        kropp.start = { date: laggDygn(String(master.start.date), dygn) };
+        kropp.end = { date: laggDygn(String(master.end?.date ?? master.start.date), dygn) };
+      } else if (!e.all_day) {
         const masterStart = Date.parse(master.start.dateTime);
         const nyStart = Date.parse(e.starts_at);
         const langd = (e.ends_at ? Date.parse(e.ends_at) : nyStart + 3600000) - nyStart;
 
         const masterDel = iZon(masterStart, serieZon);
         const nyDel = iZon(nyStart, serieZon);
-        kropp.start = { dateTime: `${masterDel.datum}T${nyDel.tid}:00`, timeZone: serieZon };
-        const slutMs = Date.parse(`${masterDel.datum}T${nyDel.tid}:00Z`) + langd;
+        // Datumet forskjuts, klockslaget satts. Bada behovs: flyttar man till
+        // en annan veckodag ar det datumet som betyder nagot, byter man tid ar
+        // det klockslaget.
+        const startDatum = laggDygn(masterDel.datum, dygn);
+        kropp.start = { dateTime: `${startDatum}T${nyDel.tid}:00`, timeZone: serieZon };
+        const slutMs = Date.parse(`${startDatum}T${nyDel.tid}:00Z`) + langd;
         const slutDel = iZon(slutMs, "UTC");
         kropp.end = { dateTime: `${slutDel.datum}T${slutDel.tid}:00`, timeZone: serieZon };
       }
+
+      // Slutdatumet i regeln foljer med, annars tanjs serien i stallet for att
+      // flyttas.
+      const nyRegel = flyttaUntil(master.recurrence, dygn);
+      if (nyRegel && dygn) kropp.recurrence = nyRegel;
 
       const r = await fetch(bas + "/" + encodeURIComponent(malId), {
         method: "PATCH", headers: huvud, body: JSON.stringify(kropp),
@@ -355,6 +431,7 @@ Deno.serve(async (req: Request) => {
         title: e.title, description: e.description, location: e.location, color: seriefarg,
       }).eq("calendar_id", e.calendar_id).eq("series_master_id", e.series_master_id);
 
+      if (dygn) serierFlyttade++;
       await klar(e, { etag: j.etag ?? null, color: seriefarg });
     } catch (fel) {
       const text = fel instanceof Error ? fel.message : String(fel);
@@ -369,5 +446,5 @@ Deno.serve(async (req: Request) => {
 
   // nyaSerier signalerar till klienten att en hamtning behovs for att fa hem
   // de expanderade tillfallena
-  return svar({ utforda, misslyckade: problem.length, kvar: kvar ?? 0, nyaSerier, flyttade, klart: koade.length < PER_OMGANG, problem });
+  return svar({ utforda, misslyckade: problem.length, kvar: kvar ?? 0, nyaSerier, serierFlyttade, flyttade, klart: koade.length < PER_OMGANG, problem });
 });
