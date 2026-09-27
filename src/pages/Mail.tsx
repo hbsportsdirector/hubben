@@ -4,7 +4,7 @@ import { sv } from 'date-fns/locale'
 import { Link } from 'react-router-dom'
 import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import { getUserId } from '../lib/data'
-import { Spinner, EmptyState } from '../components/ui'
+import { Spinner, EmptyState, Modal, Input, Select, Label, Button } from '../components/ui'
 import { Bilagor, Bifoga, MAX_UTGAENDE, type UtgaendeBilaga } from '../components/Bilagor'
 import { AdressFalt } from '../components/AdressFalt'
 import { hamtaUtkast, sparaUtkast, slangUtkast, sparatText } from '../lib/utkast'
@@ -507,6 +507,26 @@ export default function Mail() {
     await supabase.from('hub_folders').update({ hidden: !m.hidden }).eq('id', m.id).throwOnError()
     if (mappFilter === m.id) setMappFilter(null)
     await laddaMeta()
+  }
+
+  /** Rutan för en ny mapp. kontoId och foralderId är bara förval — i rutan
+   *  går båda att ändra. */
+  const [nyMapp, setNyMapp] = useState<{ kontoId?: string; foralderId?: string } | null>(null)
+
+  /** Skapar mappen på mejlservern och lägger in den i listan direkt, utan att
+   *  vänta på nästa mappsynk. Föräldrarna fälls ut — annars gör man en
+   *  undermapp och ser den inte, eftersom trädet börjar hopfällt. */
+  async function skapaMapp(kontoId: string, namn: string, foralderId?: string): Promise<{ fel?: string; mapp?: Mapp }> {
+    const r = await anropaFunktion('mail-folder-create', { accountId: kontoId, name: namn, parentId: foralderId ?? null })
+    if (r?.fel || !r?.mapp) return { fel: r?.fel ?? 'Mappen kunde inte skapas' }
+    const ny = r.mapp as Mapp
+    setMappar((f) => [...f.filter((m) => m.id !== ny.id), ny].sort((a, b) => a.path.localeCompare(b.path)))
+    setOppnaMappar((f) => {
+      const n = new Set(f)
+      for (let p = foraldern(ny.path); p; p = foraldern(p)) n.add(p)
+      return n
+    })
+    return { mapp: ny }
   }
 
   // Kolumnbredder. Sparas per webbläsare — en bredd man dragit till rätta ska
@@ -1148,9 +1168,18 @@ export default function Mail() {
           </div>
 
           <div className="min-h-0 flex-1">
-            <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
-              Mappar ({synligaMappar.length})
-            </p>
+            <div className="mb-2 flex items-center justify-between px-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                Mappar ({synligaMappar.length})
+              </p>
+              <button
+                onClick={() => setNyMapp({ kontoId: kontoFilter !== 'alla' ? kontoFilter : undefined })}
+                title="Skapa en ny mapp"
+                className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-muted transition-colors hover:bg-card-hover hover:text-ink"
+              >
+                ＋ Ny
+              </button>
+            </div>
             {mappar.length > 12 && (
               <input
                 value={mappSok}
@@ -1283,6 +1312,14 @@ export default function Mail() {
                             {synkarMapp === m.id
                               ? <span className="ml-auto shrink-0 text-[10px] text-accent-soft">hämtar…</span>
                               : (m.total_count ?? 0) > 0 && <span className="ml-auto shrink-0 text-[10px] text-muted/70">{m.total_count}</span>}
+                          </button>
+                          <button
+                            onClick={() => setNyMapp({ kontoId: m.account_id, foralderId: m.id })}
+                            title={`Ny mapp i ${m.name}`}
+                            aria-label={`Ny mapp i ${m.name}`}
+                            className="shrink-0 px-1 py-1 text-[11px] text-muted/0 transition-colors group-hover/mapp:text-muted/60 hover:!text-ink"
+                          >
+                            ＋
                           </button>
                           {/* Döljer bara i Hubben. Mappen och mejlen ligger
                               orörda kvar på mejlservern. */}
@@ -1528,6 +1565,7 @@ export default function Mail() {
         msgIds={[...valda]}
         franKonto={mejl.find((m) => valda.has(m.id))?.account_id}
         onValj={(mappId) => { setVisaBulkFlytt(false); flytta([...valda], mappId) }}
+        onSkapa={skapaMapp}
       />
 
       <FlyttaDialog
@@ -1543,7 +1581,26 @@ export default function Mail() {
           setEnkelFlytt(null)
           if (m) flytta([m.id], mappId)
         }}
+        onSkapa={skapaMapp}
       />
+
+      {nyMapp && (
+        <NyMappRuta
+          onClose={() => setNyMapp(null)}
+          konton={konton}
+          mappar={mappar}
+          forvaltKonto={nyMapp.kontoId}
+          forvaldForalder={nyMapp.foralderId}
+          onSkapa={async (kontoId, namn, foralderId) => {
+            const r = await skapaMapp(kontoId, namn, foralderId)
+            if (r.mapp) {
+              setNyMapp(null)
+              setMappFilter(r.mapp.id); setValdId(null)
+            }
+            return r
+          }}
+        />
+      )}
 
       {misslyckades && (
         <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl border border-bad/40 bg-card px-4 py-3 shadow-2xl">
@@ -1642,7 +1699,7 @@ export default function Mail() {
 interface Forslag { folder_id: string; path: string; name: string; account_id: string; traffar: number; anledning: string }
 
 /** Flyttdialog: stor yta, förslag överst, tangentbordsnavigering. */
-function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto, onValj }: {
+function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto, onValj, onSkapa }: {
   open: boolean
   onClose: () => void
   antal: number
@@ -1651,14 +1708,19 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
   msgIds: string[]
   franKonto?: string
   onValj: (mappId: string) => void
+  /** Skapar en mapp med det man sökt på. Saknas mappen man letar efter ska
+   *  man inte behöva lämna flytten, göra mappen någon annanstans och börja om. */
+  onSkapa?: (kontoId: string, namn: string) => Promise<{ fel?: string; mapp?: Mapp }>
 }) {
   const [sok, setSok] = useState('')
   const [forslag, setForslag] = useState<Forslag[]>([])
   const [markerad, setMarkerad] = useState(0)
+  const [skapar, setSkapar] = useState(false)
+  const [skapaFel, setSkapaFel] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
-    setSok(''); setMarkerad(0); setForslag([])
+    setSok(''); setMarkerad(0); setForslag([]); setSkapaFel(null)
     supabase.rpc('hub_forslag_mapp', { p_msg_ids: msgIds }).then(({ data }) => setForslag((data ?? []) as Forslag[]))
   }, [open, msgIds])
 
@@ -1668,6 +1730,22 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
   })
 
   if (!open) return null
+
+  // Den nya mappen hamnar på kontot mejlen ligger på. Ett annat konto vore en
+  // flytt som laddar upp mejlet på nytt — det ska man välja, inte råka få.
+  const skapaKonto = konton.find((k) => k.id === franKonto) ?? konton[0]
+  const nyttNamn = sok.replace(/\s+/g, ' ').trim()
+  const kanSkapa = !!onSkapa && !!skapaKonto && !!nyttNamn && !mappar.some(
+    (m) => m.account_id === skapaKonto.id && m.name.toLowerCase() === nyttNamn.toLowerCase(),
+  )
+  async function skapaOchFlytta() {
+    if (!onSkapa || !skapaKonto || skapar) return
+    setSkapar(true); setSkapaFel(null)
+    const r = await onSkapa(skapaKonto.id, nyttNamn)
+    setSkapar(false)
+    if (r.mapp) onValj(r.mapp.id)
+    else setSkapaFel(r.fel ?? 'Mappen kunde inte skapas')
+  }
 
   const kortNamn = (p: string) => p.replace(/^INBOX[./]/, '').replace(/^\[Gmail\]\//, '')
   // Kontot mejlen ligger på hamnar först — flytt dit är den snabba, enkla vägen
@@ -1697,7 +1775,10 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') { e.preventDefault(); setMarkerad((i) => Math.min(i + 1, traffar.length - 1)) }
             if (e.key === 'ArrowUp') { e.preventDefault(); setMarkerad((i) => Math.max(i - 1, 0)) }
-            if (e.key === 'Enter' && traffar[markerad]) onValj(traffar[markerad].id)
+            if (e.key === 'Enter') {
+              if (traffar[markerad]) onValj(traffar[markerad].id)
+              else if (kanSkapa) skapaOchFlytta()
+            }
             if (e.key === 'Escape') onClose()
           }}
           placeholder="Skriv för att söka bland dina mappar…"
@@ -1705,6 +1786,30 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
         />
 
         <div className="flex-1 overflow-y-auto p-4">
+          {kanSkapa && (
+            <div className="mb-5">
+              <button
+                onClick={skapaOchFlytta}
+                disabled={skapar}
+                className="flex w-full items-center gap-2.5 rounded-xl border border-dashed border-accent/50 px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent/10 disabled:opacity-60"
+              >
+                <span aria-hidden className="text-accent-soft">＋</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {skapar ? 'Skapar ' : 'Skapa mappen '}
+                  <span className="font-medium text-ink">"{nyttNamn}"</span>
+                  {skapar ? '…' : ' och flytta dit'}
+                </span>
+                {konton.length > 1 && (
+                  <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted">
+                    <span className="h-2 w-2 rounded-full" style={{ background: skapaKonto.color }} />
+                    {skapaKonto.label}
+                  </span>
+                )}
+              </button>
+              {skapaFel && <p className="mt-1.5 px-1 text-xs text-bad">{skapaFel}</p>}
+            </div>
+          )}
+
           {forslag.length > 0 && !sok && (
             <div className="mb-5">
               <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Föreslagna</p>
@@ -1762,14 +1867,102 @@ function FlyttaDialog({ open, onClose, antal, mappar, konton, msgIds, franKonto,
             </div>
           ))}
 
-          {traffar.length === 0 && <p className="py-8 text-center text-sm text-muted">Inga mappar matchar "{sok}"</p>}
+          {traffar.length === 0 && !kanSkapa && <p className="py-8 text-center text-sm text-muted">Inga mappar matchar "{sok}"</p>}
         </div>
 
         <p className="border-t border-border px-5 py-2 text-[10px] text-muted">
-          ↑↓ bläddra · Enter välj · Esc stäng
+          ↑↓ bläddra · Enter välj{onSkapa ? ' — eller skapa mappen om ingen matchar' : ''} · Esc stäng
         </p>
       </div>
     </div>
+  )
+}
+
+/** Rutan för att skapa en mapp. Namnet är det enda man måste fylla i —
+ *  kontot och platsen är förvalda efter var man stod när man klickade. */
+function NyMappRuta({ onClose, konton, mappar, forvaltKonto, forvaldForalder, onSkapa }: {
+  onClose: () => void
+  konton: Konto[]
+  mappar: Mapp[]
+  forvaltKonto?: string
+  forvaldForalder?: string
+  onSkapa: (kontoId: string, namn: string, foralderId?: string) => Promise<{ fel?: string }>
+}) {
+  const [kontoId, setKontoId] = useState(forvaltKonto ?? konton[0]?.id ?? '')
+  const [foralderId, setForalderId] = useState(forvaldForalder ?? '')
+  const [namn, setNamn] = useState('')
+  const [skapar, setSkapar] = useState(false)
+  const [fel, setFel] = useState<string | null>(null)
+
+  // Gmails vy-mappar kan inte ha undermappar, och en förälder på ett annat
+  // konto än det valda går inte att skapa i.
+  const platser = mappar
+    .filter((m) => m.account_id === kontoId && !arVymapp(m.path, m.role))
+    .sort((a, b) => a.path.localeCompare(b.path))
+  const platsNamn = (m: Mapp) =>
+    m.role === 'inbox' ? 'Inkorgen' : m.path.replace(/^INBOX[./]/, '').replace(/^\[Gmail\]\//, '').split(/[./]/).join(' › ')
+
+  async function skapa() {
+    const n = namn.replace(/\s+/g, ' ').trim()
+    if (!n || !kontoId || skapar) return
+    setSkapar(true); setFel(null)
+    const r = await onSkapa(kontoId, n, foralderId || undefined)
+    setSkapar(false)
+    if (r.fel) setFel(r.fel)
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Ny mapp"
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Avbryt</Button>
+          <Button onClick={skapa} disabled={!namn.trim() || !kontoId || skapar}>
+            {skapar ? 'Skapar…' : 'Skapa mapp'}
+          </Button>
+        </div>
+      }
+    >
+      <form
+        onSubmit={(e) => { e.preventDefault(); skapa() }}
+        className="space-y-4"
+      >
+        <div>
+          <Label>Namn</Label>
+          <Input
+            autoFocus
+            value={namn}
+            onChange={(e) => { setNamn(e.target.value); setFel(null) }}
+            placeholder="t.ex. Kvitton"
+            maxLength={100}
+          />
+        </div>
+        {konton.length > 1 && (
+          <div>
+            <Label>Konto</Label>
+            <Select
+              value={kontoId}
+              onChange={(e) => { setKontoId(e.target.value); setForalderId('') }}
+            >
+              {konton.map((k) => <option key={k.id} value={k.id}>{k.label} — {k.email}</option>)}
+            </Select>
+          </div>
+        )}
+        <div>
+          <Label>Placering</Label>
+          <Select value={foralderId} onChange={(e) => setForalderId(e.target.value)}>
+            <option value="">Överst</option>
+            {platser.map((m) => <option key={m.id} value={m.id}>I {platsNamn(m)}</option>)}
+          </Select>
+        </div>
+        {fel && <p className="text-sm text-bad">{fel}</p>}
+        {/* Enter i namnfältet ska skapa mappen. Formuläret behöver en
+            submit-knapp för det, men den synliga sitter i footern. */}
+        <button type="submit" hidden />
+      </form>
+    </Modal>
   )
 }
 

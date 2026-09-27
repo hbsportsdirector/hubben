@@ -1,6 +1,6 @@
 # Serverfunktionerna
 
-Hubbens tjugo edge-funktioner. De körs i Supabase-projektet **WORK**
+Hubbens edge-funktioner. De körs i Supabase-projektet **WORK**
 (`abwmdhvaxqlpyzgvuedj`) och låg tidigare bara där — det här är källan.
 
 ## Vad som finns här och vad som inte gör det
@@ -25,6 +25,7 @@ Vault, OAuth-klienthemligheter i `hub_oauth_klienter` via
 | `mail-body` | Brödtext + bilagekarta för ett mejl. |
 | `mail-prefetch` | Samma sak för många mejl i en uppkoppling. |
 | `mail-folders` | Speglar mappstrukturen och räknar. |
+| `mail-folder-create` | Skapar en mapp på servern och lägger in den direkt. |
 | `mail-attachment` | Hämtar en enskild bilaga. |
 | `mail-send` | SMTP, med bilagor och kopia till Skickat. |
 | `mail-drain` | Betar av kön av flyttar mot IMAP. |
@@ -39,7 +40,7 @@ Vault, OAuth-klienthemligheter i `hub_oauth_klienter` via
 
 ## Två saker som återkommer i mejlfunktionerna
 
-**`msAccessToken()` + `inloggningsrad()`** finns i alla sju IMAP-funktioner.
+**`msAccessToken()` + `inloggningsrad()`** finns i alla åtta IMAP-funktioner.
 Outlook.com kan inte använda lösenord — Microsoft stängde basic auth för
 privata konton 2024 — så de kontona loggar in med XOAUTH2 och ett färskt
 Microsoft-token. Kontofrågan måste därför alltid ha med `provider`; utan den

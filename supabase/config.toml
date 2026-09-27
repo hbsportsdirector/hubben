@@ -39,6 +39,9 @@ verify_jwt = true
 [functions.mail-folders]
 verify_jwt = true
 
+[functions.mail-folder-create]
+verify_jwt = true
+
 [functions.mail-prefetch]
 verify_jwt = true
 
