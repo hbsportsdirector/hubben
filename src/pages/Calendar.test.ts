@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tolkaTid, tidsstampel, dygnsSpann } from './Calendar'
+import { tolkaTid, tidsstampel, dygnsSpann, heldagLokal, heldagLagrad } from './Calendar'
 
 describe('tolkaTid', () => {
   it('tar emot det man faktiskt skriver', () => {
@@ -67,5 +67,28 @@ describe('dygnsSpann', () => {
     expect(dygnsSpann('2026-08-30', '2026-09-02')).toBe(4)
     // Sista helgen i oktober: klockan ställs om mitt i spannet
     expect(dygnsSpann('2026-10-24', '2026-10-26')).toBe(3)
+  })
+})
+
+// Heldagar lagras som midnatt UTC. Läst rakt av blev det kl. 02 svensk
+// sommartid, och slutet drog ut händelsen över nästa dag. Körs testerna med
+// TZ=Europe/Stockholm syns felet; i UTC hade det gått igenom ändå.
+describe('heldagLokal / heldagLagrad', () => {
+  it('ger lokal midnatt samma datum', () => {
+    const d = heldagLokal('2026-10-04T00:00:00+00:00')
+    expect(d.getFullYear()).toBe(2026)
+    expect(d.getMonth()).toBe(9)
+    expect(d.getDate()).toBe(4)
+    expect(d.getHours()).toBe(0)
+  })
+
+  it('går fram och tillbaka utan att datumet glider', () => {
+    for (const iso of ['2026-03-29T00:00:00.000Z', '2026-07-15T00:00:00.000Z', '2026-10-25T00:00:00.000Z']) {
+      expect(heldagLagrad(heldagLokal(iso))).toBe(iso)
+    }
+  })
+
+  it('lagrar en lokal dag som midnatt UTC samma datum', () => {
+    expect(heldagLagrad(new Date(2026, 9, 4))).toBe('2026-10-04T00:00:00.000Z')
   })
 })

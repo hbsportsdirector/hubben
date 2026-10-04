@@ -129,6 +129,22 @@ export function dygnsSpann(fran: string, till: string) {
   return Math.round((Date.parse(till + 'T00:00:00Z') - Date.parse(fran + 'T00:00:00Z')) / 86400000) + 1
 }
 
+/** En heldag som den lagras — midnatt UTC, som hos Google — till lokal
+ *  midnatt samma datum.
+ *
+ *  Läst rakt av blev midnatt UTC klockan 02 svensk sommartid. En heldag den
+ *  4:e visades då som 02–02, och slutet (exklusivt, den 5:e kl. 00 UTC) blev
+ *  den 5:e kl. 02 — så kalendern drog ut den över nästa dag också. */
+export function heldagLokal(iso: string): Date {
+  const d = parseISO(iso)
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+}
+
+/** Tillbaka: en lokal dag till midnatt UTC samma datum, så som den lagras. */
+export function heldagLagrad(d: Date): string {
+  return `${format(d, 'yyyy-MM-dd')}T00:00:00.000Z`
+}
+
 export function tidsstampel(datum: string, tid: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(datum)) return null
   const t = tolkaTid(tid)
@@ -238,12 +254,17 @@ export default function Calendar() {
       .order('starts_at')
     setEvents(
       (data ?? []).map((e: HubEvent) => {
-        const start = parseISO(e.starts_at)
+        const start = e.all_day ? heldagLokal(e.starts_at) : parseISO(e.starts_at)
+        // Heldagens slut är exklusivt: en endagshändelse den 4:e slutar den
+        // 5:e kl. 00, och det är så kalendern vill ha den.
+        const end = e.all_day
+          ? (e.ends_at && heldagLokal(e.ends_at) > start ? heldagLokal(e.ends_at) : addDays(start, 1))
+          : (e.ends_at ? parseISO(e.ends_at) : addHours(start, 1))
         return {
           id: e.id,
           title: e.title,
           start,
-          end: e.ends_at ? parseISO(e.ends_at) : (e.all_day ? start : addHours(start, 1)),
+          end,
           allDay: e.all_day,
           color: e.color,
           raw: e,
@@ -308,17 +329,21 @@ export default function Calendar() {
   }, [load])
 
   async function persistTimes(ev: CalEvent, start: Date, end: Date, allDay: boolean) {
+    // En heldag som dras får inte alltid ett slut: från tidsraden till
+    // heldagsraden ger kalendern start och slut på samma midnatt.
+    if (allDay && end <= start) end = addDays(start, 1)
     setEvents((prev) => prev.map((x) => (x.id === ev.id ? { ...x, start, end, allDay } : x)))
     await supabase
       .from('hub_events')
       .update({
-        starts_at: start.toISOString(),
+        // Kalendern ger lokal midnatt; lagringen är midnatt UTC samma datum
+        starts_at: allDay ? heldagLagrad(start) : start.toISOString(),
         // Heldagar fick förr ends_at: null. En cup över tre dagar kollapsade
         // därmed till en enda så fort man drog i den — och att dra i den är
         // just vad man gör när ett läger flyttas. Slutet kalendern ger
         // tillbaka är riktigt i båda fallen, både vid flytt och vid att man
         // drar i kanten.
-        ends_at: end > start ? end.toISOString() : null,
+        ends_at: allDay ? heldagLagrad(end) : end > start ? end.toISOString() : null,
         all_day: allDay,
         // Hor handelsen till en Google-kalender ska andringen dit ocksa
         ...(ev.raw.calendar_id ? { pending_op: 'andra', pending_nasta: new Date().toISOString(), pending_forsok: 0 } : {}),
@@ -497,7 +522,7 @@ export default function Calendar() {
             <p className="text-ink">
               {visad.allDay
                 ? format(visad.start, 'EEEE d MMMM', { locale: sv }) +
-                  (visad.end.getTime() - visad.start.getTime() > 86400000
+                  (format(addDays(visad.end, -1), 'yyyy-MM-dd') > format(visad.start, 'yyyy-MM-dd')
                     ? ' – ' + format(addDays(visad.end, -1), 'EEEE d MMMM', { locale: sv })
                     : '')
                 : `${format(visad.start, 'EEEE d MMMM HH:mm', { locale: sv })}–${format(visad.end, 'HH:mm')}`}
@@ -646,18 +671,22 @@ function EventModal({ open, onClose, event, initialStart, initialEnd, onSaved, o
   useEffect(() => {
     if (!open) return
     if (event) {
-      const start = parseISO(event.starts_at)
+      const start = event.all_day ? heldagLokal(event.starts_at) : parseISO(event.starts_at)
       setTitle(event.title)
       setDescription(event.description ?? '')
       setLocation(event.location ?? '')
       setDate(format(start, 'yyyy-MM-dd'))
-      setTime(format(start, 'HH:mm'))
-      setEndTime(event.ends_at ? format(parseISO(event.ends_at), 'HH:mm') : '')
+      // En heldag har inget klockslag. Läst rakt av blev det 02–02, och det
+      // var vad som stod kvar om man kryssade ur Heldag.
+      setTime(event.all_day ? '09:00' : format(start, 'HH:mm'))
+      setEndTime(event.all_day ? '' : event.ends_at ? format(parseISO(event.ends_at), 'HH:mm') : '')
       // Slutdatumet visas bara när det skiljer sig från startdagen. Heldagar
       // lagras med EXKLUSIVT slut, precis som hos Google: en cup 4–6 sep har
       // ends_at den 7:e, så ett dygn dras av för att visa det Per skrev in.
       {
-        const slutRaa = event.ends_at ? parseISO(event.ends_at) : null
+        const slutRaa = event.ends_at
+          ? (event.all_day ? heldagLokal(event.ends_at) : parseISO(event.ends_at))
+          : null
         const visat = slutRaa
           ? format(event.all_day ? addDays(slutRaa, -1) : slutRaa, 'yyyy-MM-dd')
           : ''
