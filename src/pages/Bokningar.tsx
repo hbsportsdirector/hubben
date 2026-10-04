@@ -49,7 +49,7 @@ export default function Bokningar() {
       supabase.from('hub_bokningslankar').select('*').order('skapad'),
       supabase.from('hub_oppettider').select('*').order('veckodag').order('fran_tid'),
       supabase.from('hub_bokningar').select('*').is('avbokad_at', null).order('starts_at'),
-      supabase.from('hub_calendars').select('id, namn').eq('aktiv', true).order('namn'),
+      supabase.from('hub_calendars').select('id, namn').eq('aktiv', true).neq('provider', 'ics').order('namn'),
       supabase.from('hub_mail_accounts').select('id, label, email').eq('active', true).order('sort_order'),
     ])
     setLankar((l.data as Lank[]) ?? [])

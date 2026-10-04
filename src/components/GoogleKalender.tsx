@@ -42,6 +42,8 @@ export function GoogleKalender() {
       supabase
         .from('hub_calendars')
         .select('id, namn, color, aktiv')
+        // Prenumerationerna har en egen ruta — de är inte Googles att slå av
+        .eq('provider', 'google')
         .order('namn'),
     ])
     setKlient(data ? { ...data, har_hemlighet: !!data.hemlighet_id } : null)

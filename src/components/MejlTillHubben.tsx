@@ -29,7 +29,9 @@ export function MejlTillHubben({ msgId, amne, franEpost, onKlart }: {
 
   const laddaKalendrar = useCallback(async () => {
     const { data } = await supabase
-      .from('hub_calendars').select('id, namn, color').eq('aktiv', true).order('namn')
+      .from('hub_calendars').select('id, namn, color').eq('aktiv', true)
+      // Prenumerationer är skrivskyddade — dit går det inte att lägga något
+      .neq('provider', 'ics').order('namn')
     const lista = (data as Kalender[]) ?? []
     setKalendrar(lista)
     setValdKalender((v) => v || lista[0]?.id || '')

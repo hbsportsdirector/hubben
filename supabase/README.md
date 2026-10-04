@@ -1,6 +1,6 @@
 # Serverfunktionerna
 
-Hubbens tjugo edge-funktioner. De körs i Supabase-projektet **WORK**
+Hubbens tjugoen edge-funktioner. De körs i Supabase-projektet **WORK**
 (`abwmdhvaxqlpyzgvuedj`) och låg tidigare bara där — det här är källan.
 
 ## Vad som finns här och vad som inte gör det
@@ -31,6 +31,7 @@ Vault, OAuth-klienthemligheter i `hub_oauth_klienter` via
 | `mail-move`, `mail-move-x`, `mail-move-bulk` | Äldre direktflyttar. Oanvända sedan skrivvägen vändes 2026-08-10, kvar tills de är säkert döda. |
 | `calendar-sync` | Hämtar hem Google-kalendrarna. |
 | `calendar-push` | Skickar upp ändringar, inklusive flytt mellan kalendrar. |
+| `ics-sync` | Prenumerationer: hämtar kalendrar från en .ics-länk (lagkalendrar). Kan köras av schemaläggaren. |
 | `google-oauth-start` / `-callback` | Ansluter Google Kalender. |
 | `ms-oauth-start` / `-callback` | Ansluter Outlook. |
 | `market-data` | Proxar Yahoo Finance. |

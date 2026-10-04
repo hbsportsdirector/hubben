@@ -1,7 +1,7 @@
 # Inställningarna som INTE syns i källkoden.
 #
 # verify_jwt avgör om Supabase kräver en giltig inloggningstoken innan
-# funktionen ens körs. De sju som står på false gör det av var sitt tvingande
+# funktionen ens körs. De åtta som står på false gör det av var sitt tvingande
 # skäl — det står i respektive fils inledning. Sätt aldrig någon av dem till
 # true utan att läsa den kommentaren först, och sätt aldrig någon annan
 # funktion till false.
@@ -14,6 +14,10 @@ verify_jwt = true
 
 # Släpper in schemaläggaren via cron-nyckeln, som inte har någon session
 [functions.calendar-sync]
+verify_jwt = false
+
+# Samma skäl som calendar-sync
+[functions.ics-sync]
 verify_jwt = false
 
 [functions.google-oauth-start]

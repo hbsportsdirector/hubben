@@ -3,6 +3,7 @@ import { Calendar as BigCalendar, Views } from 'react-big-calendar'
 import type { View, SlotInfo, ToolbarProps } from 'react-big-calendar'
 import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
 import { format, parseISO, addHours, startOfWeek, endOfWeek, startOfMonth, endOfMonth, addDays, getISOWeek } from 'date-fns'
+import { sv } from 'date-fns/locale'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import '../styles/calendar.css'
@@ -141,6 +142,8 @@ interface Kalender {
   namn: string
   color: string
   synlig: boolean
+  /** 'google' eller 'ics' — en prenumeration, skrivskyddad */
+  provider: string
 }
 
 interface CalEvent {
@@ -200,11 +203,25 @@ export default function Calendar() {
     // synas alls här — inte ens som ett avkryssat val.
     const { data } = await supabase
       .from('hub_calendars')
-      .select('id, namn, color, synlig')
+      .select('id, namn, color, synlig, provider')
       .eq('aktiv', true)
       .order('namn')
     setKalendrar((data as Kalender[]) ?? [])
   }, [])
+
+  // Prenumerationerna (lagkalendrar via .ics) ägs av källan. Det som ändras
+  // här skulle skrivas över vid nästa hämtning, så de går inte att dra i,
+  // och de erbjuds inte som kalender för nya händelser.
+  const prenumererade = useMemo(
+    () => new Set(kalendrar.filter((k) => k.provider === 'ics').map((k) => k.id)),
+    [kalendrar],
+  )
+  const skrivbara = useMemo(() => kalendrar.filter((k) => k.provider !== 'ics'), [kalendrar])
+  const arLasbar = useCallback(
+    (ev: CalEvent) => !!ev.raw.calendar_id && prenumererade.has(ev.raw.calendar_id),
+    [prenumererade],
+  )
+  const [visad, setVisad] = useState<CalEvent | null>(null)
 
   async function vaxlaSynlig(k: Kalender) {
     setKalendrar((prev) => prev.map((x) => (x.id === k.id ? { ...x, synlig: !x.synlig } : x)))
@@ -431,7 +448,12 @@ export default function Calendar() {
               popup
               selectable
               onSelectSlot={onSelectSlot}
-              onSelectEvent={(ev) => { setEditEvent(ev.raw); setModal(true) }}
+              onSelectEvent={(ev) => {
+                if (arLasbar(ev)) { setVisad(ev); return }
+                setEditEvent(ev.raw); setModal(true)
+              }}
+              draggableAccessor={(ev) => !arLasbar(ev)}
+              resizableAccessor={(ev) => !arLasbar(ev)}
               onEventDrop={({ event, start, end, isAllDay }) =>
                 persistTimes(event, start as Date, end as Date, Boolean(isAllDay))
               }
@@ -458,7 +480,7 @@ export default function Calendar() {
         event={editEvent}
         initialStart={slotStart}
         initialEnd={slotEnd}
-        kalendrar={kalendrar}
+        kalendrar={skrivbara}
         // Läs om direkt, och låt kön mot Google jobba ifatt efteråt. Förut
         // väntade vyn på hela rundan till Google — token, skapa, svar — innan
         // den nya händelsen dök upp. På mobilnät blev det flera sekunder där
@@ -468,6 +490,29 @@ export default function Calendar() {
         onSaved={(tillGoogle) => { load(); if (tillGoogle) betaAvKon() }}
         onDelete={remove}
       />
+
+      <Modal open={!!visad} onClose={() => setVisad(null)} title={visad?.title ?? ''}>
+        {visad && (
+          <div className="space-y-2 text-sm">
+            <p className="text-ink">
+              {visad.allDay
+                ? format(visad.start, 'EEEE d MMMM', { locale: sv }) +
+                  (visad.end.getTime() - visad.start.getTime() > 86400000
+                    ? ' – ' + format(addDays(visad.end, -1), 'EEEE d MMMM', { locale: sv })
+                    : '')
+                : `${format(visad.start, 'EEEE d MMMM HH:mm', { locale: sv })}–${format(visad.end, 'HH:mm')}`}
+            </p>
+            {visad.raw.location && <p className="text-muted">📍 {visad.raw.location}</p>}
+            {visad.raw.description && (
+              <p className="whitespace-pre-wrap break-words text-muted">{visad.raw.description}</p>
+            )}
+            <p className="flex items-center gap-1.5 pt-2 text-xs text-muted">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: visad.color }} />
+              {kalendrar.find((k) => k.id === visad.raw.calendar_id)?.namn} · prenumeration, ändras i källan
+            </p>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { supabase, supabaseUrl, supabaseKey } from '../lib/supabase'
 import type { HubMailAccount } from '../lib/types'
 import { Card, SectionTitle, Button, Input, Label, Spinner, Textarea } from '../components/ui'
 import { GoogleKalender } from '../components/GoogleKalender'
+import { Prenumerationer } from '../components/Prenumerationer'
 import { OutlookKonto } from '../components/OutlookKonto'
 import { STORLEKAR, hamtaTextstorlek, sattTextstorlek } from '../lib/textstorlek'
 
@@ -129,6 +130,8 @@ export default function Settings() {
       </Card>
 
       <GoogleKalender />
+
+      <Prenumerationer />
 
       <OutlookKonto />
 
