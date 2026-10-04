@@ -148,12 +148,18 @@ async function synkaAnvandare(userId: string) {
         u.searchParams.set("singleEvents", "true");
         u.searchParams.set("maxResults", "250");
         u.searchParams.set("showDeleted", "true");
-        if (sida) u.searchParams.set("pageToken", sida);
-        else if (syncToken) u.searchParams.set("syncToken", syncToken);
+        // Sidtokenet bar INTE med sig fragan - Google vill ha samma
+        // parametrar pa varje sida. Forr skickades fonstret bara pa forsta
+        // sidan, sa fran sida tva expanderades varje serie utan slutdatum
+        // ar fram i tiden. "Sportchef Taby HBK" slog i taket pa 10000 poster
+        // varje varv, fick aldrig nagot synktoken, och allt som lag efter
+        // taket - som en nyskapad tisdagsserie - kom aldrig hem.
+        if (syncToken) u.searchParams.set("syncToken", syncToken);
         else {
           u.searchParams.set("timeMin", new Date(nu - BAKAT_DAGAR * 864e5).toISOString());
           u.searchParams.set("timeMax", new Date(nu + FRAMAT_DAGAR * 864e5).toISOString());
         }
+        if (sida) u.searchParams.set("pageToken", sida);
 
         const r = await fetch(u.toString(), { headers: huvud });
         if (r.status === 410) {
