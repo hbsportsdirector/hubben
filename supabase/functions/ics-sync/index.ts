@@ -88,8 +88,15 @@ async function synka(kal: Kal) {
   try {
     const tolkat = tolkaIcs(await hamtaFil(kal.external_id), fonster, kal.tidszon || "Europe/Stockholm");
 
+    // Svenskalag och liknande skriver kalenderns namn sist i varje titel:
+    // "Handboll // Dam - Taby HBK". Det byts mot namnet kalendern har i
+    // Hubben, sa att ett kortare namn dar ocksa kortar titlarna.
+    const svans = tolkat.namn ? " // " + tolkat.namn : null;
     const rader = tolkat.rader.map((r) => ({
       ...r,
+      title: svans && r.title.endsWith(svans) && kal.namn !== tolkat.namn
+        ? r.title.slice(0, -svans.length) + " // " + kal.namn
+        : r.title,
       user_id: kal.user_id,
       calendar_id: kal.id,
       color: kal.color,
